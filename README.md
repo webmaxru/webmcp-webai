@@ -17,7 +17,8 @@ Open the local Vite URL. The demo works in every modern browser through its dete
 2. Ask “What is the project health?” and expand **Tool invocations**: the model chooses `get_project_summary`.
 3. Ask “Find high priority tasks”: the page runs `search_tasks` against local state and returns the result.
 4. Open **Activity** to show the calls are inspectable, then **Settings** to show the local auth boundary and browser capability status.
-5. Explain that the mock path is only a presentation fallback; the architecture has no server-side model, secret, or data replication requirement.
+5. Open **Debug** to show secure-context checks, the active `document.modelContext`/legacy fallback surface, per-tool registration results, Prompt API availability, local model download status, and the full runtime log.
+6. Explain that the mock path is only a presentation fallback; the architecture has no server-side model, secret, or data replication requirement.
 
 ## Architecture
 

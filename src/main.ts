@@ -1,7 +1,8 @@
 import './style.css'
 
-type Scene = 'overview' | 'activity' | 'settings'
+type Scene = 'overview' | 'activity' | 'settings' | 'debug'
 type TaskStatus = 'Todo' | 'In progress' | 'Done'
+type DebugLevel = 'info' | 'success' | 'error' | 'pending'
 
 interface Task {
   id: string
@@ -46,6 +47,11 @@ interface WebMcpContext {
   unregisterTool?: (name: string) => void
 }
 
+interface PromptLanguageModel {
+  availability?: () => Promise<string> | string
+  create: (options: Record<string, unknown>) => Promise<{ prompt: (input: string) => Promise<string> }>
+}
+
 const project: Project = {
   name: 'Atlas launch',
   description: 'A client-side project workspace. The page owns the data, state, and tools.',
@@ -68,10 +74,22 @@ const state = {
   promptMode: 'mock' as 'prompt-api' | 'mock',
   webMcpMode: 'mock' as 'webmcp' | 'mock',
   webMcpRegistrationStarted: false,
+  webMcpRegistration: 'pending' as 'pending' | 'complete' | 'unavailable' | 'error',
+  webMcpRegisteredTools: [] as string[],
+  webMcpErrors: [] as string[],
+  promptApiAvailable: false,
+  promptAvailability: 'checking',
+  promptDownload: 'unknown',
+  promptSession: 'idle' as 'idle' | 'creating' | 'ready' | 'error',
+  debugLogs: [] as { time: string; level: DebugLevel; message: string; detail?: string }[],
 }
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character]!)
+}
+
+function debugLog(level: DebugLevel, message: string, detail?: string) {
+  state.debugLogs.unshift({ time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), level, message, detail })
 }
 
 const tools: LocalTool[] = [
@@ -101,7 +119,6 @@ const tools: LocalTool[] = [
       const task = project.tasks.find((candidate) => candidate.id === taskId)
       if (!task || !['Todo', 'In progress', 'Done'].includes(status)) return JSON.stringify({ error: 'Task or status not found' })
       task.status = status as TaskStatus
-      void registerWebMcpTools()
       render()
       return JSON.stringify(task)
     },
@@ -114,7 +131,13 @@ async function registerWebMcpTools() {
   const documentWithModelContext = document as Document & { modelContext?: WebMcpContext }
   const navigatorWithModelContext = navigator as Navigator & { modelContext?: WebMcpContext }
   const modelContext = documentWithModelContext.modelContext || navigatorWithModelContext.modelContext
-  if (!modelContext?.registerTool) return
+  const surface = documentWithModelContext.modelContext ? 'document.modelContext' : navigatorWithModelContext.modelContext ? 'navigator.modelContext (legacy)' : 'none'
+  debugLog('info', 'WebMCP capability check', `surface=${surface}; secureContext=${window.isSecureContext}`)
+  if (!modelContext?.registerTool) {
+    state.webMcpRegistration = 'unavailable'
+    debugLog('error', 'WebMCP unavailable', 'Enable Chrome WebMCP preview and chrome://flags/#enable-webmcp-testing.')
+    return
+  }
 
   const schemas: Record<string, Record<string, unknown>> = {
     get_project_summary: { type: 'object', properties: {} },
@@ -130,6 +153,7 @@ async function registerWebMcpTools() {
   const controller = new AbortController()
   const registered = await Promise.all(tools.map(async (tool) => {
     try {
+      debugLog('pending', `Registering ${tool.name}`)
       await modelContext.registerTool({
         name: tool.name,
         title: tool.name.replaceAll('_', ' '),
@@ -138,16 +162,47 @@ async function registerWebMcpTools() {
         annotations: { readOnlyHint: tool.name !== 'set_task_status' },
         execute: async (input) => JSON.parse(invokeTool(tool.name, input)),
       }, { signal: controller.signal })
+      state.webMcpRegisteredTools.push(tool.name)
+      debugLog('success', `Registered ${tool.name}`, 'Visible to the browser model context.')
       return true
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      state.webMcpErrors.push(`${tool.name}: ${message}`)
+      debugLog('error', `Failed to register ${tool.name}`, message)
       console.error(`Failed to register WebMCP tool "${tool.name}"`, error)
       return false
     }
   }))
   if (registered.some(Boolean)) {
     state.webMcpMode = 'webmcp'
+    state.webMcpRegistration = state.webMcpErrors.length ? 'error' : 'complete'
+    debugLog(state.webMcpErrors.length ? 'error' : 'success', 'WebMCP registration finished', `${state.webMcpRegisteredTools.length}/${tools.length} tools registered.`)
+    void registerWebMcpTools()
+    void detectPromptApi()
     render()
   }
+}
+
+async function detectPromptApi() {
+  const promptApi = (globalThis as typeof globalThis & { ai?: { languageModel?: PromptLanguageModel } }).ai?.languageModel
+  if (!promptApi) {
+    state.promptAvailability = 'unavailable'
+    state.promptDownload = 'unavailable'
+    debugLog('error', 'Prompt API unavailable', 'The global ai.languageModel surface is not exposed in this browser.')
+    render()
+    return
+  }
+  state.promptApiAvailable = true
+  try {
+    state.promptAvailability = 'available'
+    state.promptDownload = promptApi.availability ? await promptApi.availability() : 'unknown'
+    debugLog('success', 'Prompt API detected', `languageModel availability=${state.promptDownload}`)
+  } catch (error) {
+    state.promptAvailability = 'error'
+    state.promptDownload = 'error'
+    debugLog('error', 'Prompt API availability check failed', error instanceof Error ? error.message : String(error))
+  }
+  render()
 }
 
 function invokeTool(name: string, input: Record<string, string> = {}) {
@@ -183,14 +238,22 @@ async function askAgent(message: string) {
   state.chat.push({ role: 'user', text: message })
   render()
   let answer = mockAgent(message)
-  const promptApi = (globalThis as typeof globalThis & { ai?: { languageModel?: { create: (options: Record<string, unknown>) => Promise<{ prompt: (input: string) => Promise<string> }> } } }).ai?.languageModel
+  const promptApi = (globalThis as typeof globalThis & { ai?: { languageModel?: PromptLanguageModel } }).ai?.languageModel
   if (promptApi) {
     try {
+      state.promptSession = 'creating'
+      debugLog('pending', 'Creating local Prompt API session', 'The model may need to download before the first prompt.')
+      render()
       const session = await promptApi.create({ systemPrompt: 'You are a concise project assistant. Use the provided page tools when answering.' })
+      debugLog('success', 'Local Prompt API session ready')
       answer = await session.prompt(message)
       state.promptMode = 'prompt-api'
+      state.promptSession = 'ready'
+      debugLog('success', 'Prompt API response received', 'Response generated on-device.')
     } catch {
       state.promptMode = 'mock'
+      state.promptSession = 'error'
+      debugLog('error', 'Prompt API request failed', 'Using deterministic demo model fallback.')
     }
   }
   state.chat.push({ role: 'assistant', text: answer })
@@ -203,15 +266,14 @@ function renderTask(task: Task) {
 
 function render() {
   const filteredTasks = state.filter === 'All' ? project.tasks : project.tasks.filter((task) => task.status === state.filter)
-  const toolTrace = state.toolCalls.slice(0, 5).map((call) => `<div class="trace-row"><span class="trace-number">${String(call.id).padStart(2, '0')}</span><div><strong>${call.name}</strong><small>${call.status === 'running' ? 'Calling page tool…' : `Returned ${call.output.length} chars`}</small></div><span class="trace-status">${call.status === 'complete' ? '✓' : '…'}</span></div>`).join('')
   const chat = state.chat.map((message) => `<div class="chat-message ${message.role}"><span class="chat-label">${message.role === 'user' ? 'YOU' : 'LOCAL MODEL'}</span><p>${escapeHtml(message.text).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p></div>`).join('')
   document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="app-shell">
       <header class="topbar"><div class="brand"><span class="brand-mark">✦</span><span>WEB<span class="brand-muted">MCP</span></span><span class="brand-divider">/</span><span class="brand-context">ATLAS WORKSPACE</span></div><div class="top-actions"><span class="live-pill"><i></i> LOCAL-FIRST</span><button class="avatar" aria-label="Open user settings">JL</button></div></header>
       <div class="layout">
-        <aside class="sidebar"><div class="side-label">WORKSPACE</div><button class="nav-item ${state.scene === 'overview' ? 'active' : ''}" data-scene="overview"><span>▦</span> Overview</button><button class="nav-item ${state.scene === 'activity' ? 'active' : ''}" data-scene="activity"><span>↗</span> Activity <b>12</b></button><button class="nav-item ${state.scene === 'settings' ? 'active' : ''}" data-scene="settings"><span>⚙</span> Settings</button><div class="sidebar-spacer"></div><div class="connection-card"><span class="connection-icon">◉</span><div><strong>Page tools online</strong><small>${tools.length} tools · no backend</small></div></div><div class="user-card"><span class="avatar small">JL</span><div><strong>Jordan Lee</strong><small>Product lead</small></div><span>⌄</span></div></aside>
-        <main class="main-content">${state.scene === 'settings' ? renderSettings() : state.scene === 'activity' ? renderActivity() : renderOverview(filteredTasks)}</main>
-        <aside class="agent-panel"><div class="agent-heading"><div><span class="eyebrow">ON-DEVICE ASSISTANT</span><h2>Ask the workspace</h2></div><span class="model-badge">${state.promptMode === 'prompt-api' ? 'PROMPT API' : 'DEMO MODEL'}</span></div><p class="agent-description">The model can discover and call tools exposed by this page. Nothing leaves your browser.</p><div class="chat-log">${chat || '<div class="empty-chat"><span>✦</span><p>Try asking:</p><button class="suggestion">“What is the project health?”</button><button class="suggestion">“Find high priority tasks”</button><button class="suggestion">“Who am I signed in as?”</button></div>'}</div><form class="chat-form" id="chat-form"><input id="chat-input" aria-label="Ask the local model" placeholder="Ask about this workspace…" autocomplete="off"><button aria-label="Send message">↗</button></form><div class="tool-trace"><div class="trace-heading"><span>TOOL INVOCATIONS</span><span class="tool-count">${state.toolCalls.length}</span></div>${toolTrace || '<div class="trace-empty">No tools called yet</div>'}</div></aside>
+        <aside class="sidebar"><div class="side-label">WORKSPACE</div><button class="nav-item ${state.scene === 'overview' ? 'active' : ''}" data-scene="overview"><span>▦</span> Overview</button><button class="nav-item ${state.scene === 'activity' ? 'active' : ''}" data-scene="activity"><span>↗</span> Activity <b>12</b></button><button class="nav-item ${state.scene === 'debug' ? 'active' : ''}" data-scene="debug"><span>⌘</span> Debug</button><button class="nav-item ${state.scene === 'settings' ? 'active' : ''}" data-scene="settings"><span>⚙</span> Settings</button><div class="sidebar-spacer"></div><div class="connection-card"><span class="connection-icon">◉</span><div><strong>Page tools online</strong><small>${tools.length} tools · no backend</small></div></div><div class="user-card"><span class="avatar small">JL</span><div><strong>Jordan Lee</strong><small>Product lead</small></div><span>⌄</span></div></aside>
+        <main class="main-content">${state.scene === 'settings' ? renderSettings() : state.scene === 'activity' ? renderActivity() : state.scene === 'debug' ? renderDebug() : renderOverview(filteredTasks)}</main>
+        <aside class="agent-panel"><div class="agent-heading"><div><span class="eyebrow">ON-DEVICE ASSISTANT</span><h2>Ask the workspace</h2></div><span class="model-badge">${state.promptMode === 'prompt-api' ? 'PROMPT API' : 'DEMO MODEL'}</span></div><p class="agent-description">The model can discover and call tools exposed by this page. Nothing leaves your browser.</p><div class="chat-log">${chat || '<div class="empty-chat"><span>✦</span><p>Try asking:</p><button class="suggestion">“What is the project health?”</button><button class="suggestion">“Find high priority tasks”</button><button class="suggestion">“Who am I signed in as?”</button></div>'}</div><form class="chat-form" id="chat-form"><input id="chat-input" aria-label="Ask the local model" placeholder="Ask about this workspace…" autocomplete="off"><button aria-label="Send message">↗</button></form></aside>
       </div>
     </div>`
   bindEvents()
@@ -226,6 +288,16 @@ function renderActivity() {
   return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">WORKSPACE / ACTIVITY</span><h1>What changed</h1><p>A local audit trail keeps the agent's actions inspectable.</p></div></div><div class="activity-list">${state.toolCalls.length ? state.toolCalls.map((call) => `<div class="activity-item"><span class="activity-icon">✦</span><div><strong>${call.name}</strong><p>Page-local tool invoked with ${call.input}</p></div><time>just now</time></div>`).join('') : '<div class="blank-state"><span>↗</span><h2>No tool activity yet</h2><p>Ask the local assistant a question to see the page respond.</p></div>'}</div></section>`
 }
 
+function renderDebug() {
+  const documentContext = Boolean((document as Document & { modelContext?: WebMcpContext }).modelContext)
+  const navigatorContext = Boolean((navigator as Navigator & { modelContext?: WebMcpContext }).modelContext)
+  const secure = window.isSecureContext
+  const toolTrace = state.toolCalls.map((call) => `<div class="trace-row"><span class="trace-number">${String(call.id).padStart(2, '0')}</span><div><strong>${escapeHtml(call.name)}</strong><small>Input: ${escapeHtml(call.input)} · ${call.status === 'running' ? 'Calling page tool…' : `Returned ${call.output.length} chars`}</small></div><span class="trace-status">${call.status === 'complete' ? '✓' : '…'}</span></div>`).join('')
+  const logs = state.debugLogs.map((entry) => `<div class="debug-log ${entry.level}"><time>${entry.time}</time><span class="log-symbol">${entry.level === 'success' ? '✓' : entry.level === 'error' ? '!' : entry.level === 'pending' ? '…' : '·'}</span><div><strong>${escapeHtml(entry.message)}</strong>${entry.detail ? `<small>${escapeHtml(entry.detail)}</small>` : ''}</div></div>`).join('')
+  const status = (value: string, good: boolean) => `<span class="status-chip ${good ? 'good' : 'muted'}">${value}</span>`
+  return `<section class="content-inner debug-page"><div class="page-header"><div><span class="eyebrow">SYSTEM / DEBUG CONSOLE</span><h1>Runtime diagnostics</h1><p>Everything below is measured in this tab. No server telemetry or external model is involved.</p></div></div><div class="debug-status-grid"><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">WEBMCP</span>${status(state.webMcpRegistration, state.webMcpRegistration === 'complete')}</div><div class="debug-big">${state.webMcpRegisteredTools.length}<em>/ ${tools.length} tools</em></div><div class="status-line"><span>Secure context</span>${status(secure ? 'yes' : 'no', secure)}</div><div class="status-line"><span>document.modelContext</span>${status(documentContext ? 'available' : 'missing', documentContext)}</div><div class="status-line"><span>navigator.modelContext</span>${status(navigatorContext ? 'available (legacy)' : 'missing', navigatorContext)}</div><div class="status-line"><span>Registration errors</span>${status(String(state.webMcpErrors.length), state.webMcpErrors.length === 0)}</div></div><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">PROMPT API</span>${status(state.promptAvailability, state.promptApiAvailable)}</div><div class="debug-big">${state.promptSession}<em> session</em></div><div class="status-line"><span>ai.languageModel</span>${status(state.promptApiAvailable ? 'available' : 'missing', state.promptApiAvailable)}</div><div class="status-line"><span>Model download</span>${status(state.promptDownload, state.promptDownload === 'available')}</div><div class="status-line"><span>Last model path</span>${status(state.promptMode === 'prompt-api' ? 'local response' : 'fallback', state.promptMode === 'prompt-api')}</div><small class="debug-help">Download status comes from the browser's Prompt API availability signal. Creating a session may trigger a local model download.</small></div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">TOOL INVOCATIONS</span><h2>Execution trace</h2></div><span class="tool-count">${state.toolCalls.length}</span></div><div class="trace-list">${toolTrace || '<div class="trace-empty">No tools called yet</div>'}</div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">RUNTIME LOG</span><h2>Prompt API + WebMCP events</h2></div><span class="tool-count">${state.debugLogs.length}</span></div><div class="debug-log-list">${logs || '<div class="trace-empty">Waiting for page diagnostics…</div>'}</div></div></section>`
+}
+
 function renderSettings() {
   return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">WORKSPACE / SETTINGS</span><h1>Local by design</h1><p>These values are deliberately visible: the page owns the data boundary.</p></div></div><div class="settings-grid"><div class="settings-card"><span class="eyebrow">AUTH SESSION</span><h2>Jordan Lee</h2><p>Product lead · signed in locally</p><div class="permission-row"><span>read:project</span><span>update:tasks</span></div></div><div class="settings-card"><span class="eyebrow">BROWSER CAPABILITIES</span><div class="capability"><span class="cap-dot ${state.promptMode === 'prompt-api' ? 'on' : ''}"></span><div><strong>Prompt API</strong><small>${state.promptMode === 'prompt-api' ? 'Available and active' : 'Fallback mode active'}</small></div></div><div class="capability"><span class="cap-dot ${state.webMcpMode === 'webmcp' ? 'on' : ''}"></span><div><strong>WebMCP</strong><small>${state.webMcpMode === 'webmcp' ? 'Tools registered with browser' : 'Demo registry active'}</small></div></div></div></div><div class="architecture-note"><span>⌘</span><div><strong>No backend LLM. No API tokens.</strong><p>Tools run against the state this page already has. In a production browser with WebMCP enabled, the same registry is handed to the browser's model context API.</p></div></div></section>`
 }
@@ -238,4 +310,6 @@ function bindEvents() {
   document.querySelector<HTMLButtonElement>('[data-demo="summary"]')?.addEventListener('click', () => void askAgent('What is the project health?'))
 }
 
+void registerWebMcpTools()
+void detectPromptApi()
 render()
