@@ -1,4 +1,5 @@
 import './style.css'
+import { mergeDownloadProgress } from './prompt-download'
 
 type Scene = 'overview' | 'activity' | 'settings' | 'debug'
 type TaskStatus = 'Todo' | 'In progress' | 'Done'
@@ -239,7 +240,6 @@ async function ensurePromptSession() {
   if (!languageModel) throw new Error('LanguageModel is unavailable in this browser.')
 
   state.promptSessionState = 'creating'
-  state.promptDownloadProgress = null
   debugLog('pending', 'Creating Prompt API session', 'This user-initiated call may start downloading the local model.')
   render()
   const options = promptSessionOptions()
@@ -254,9 +254,7 @@ async function ensurePromptSession() {
       debugLog('pending', 'Local model download started or is continuing')
       monitor.addEventListener('downloadprogress', (event) => {
         const progress = event as Event & { loaded?: number; total?: number }
-        if (typeof progress.total === 'number' && progress.total > 0) {
-          state.promptDownloadProgress = Math.max(0, Math.min(1, (progress.loaded ?? 0) / progress.total))
-        }
+        state.promptDownloadProgress = mergeDownloadProgress(state.promptDownloadProgress, progress.loaded, progress.total)
         state.promptDownload = 'downloading'
         render()
       })
