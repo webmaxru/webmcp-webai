@@ -37,10 +37,13 @@ interface LocalTool {
 interface WebMcpContext {
   registerTool: (tool: {
     name: string
+    title: string
     description: string
     inputSchema: Record<string, unknown>
+    annotations: { readOnlyHint: boolean }
     execute: (input: Record<string, string>) => Promise<unknown>
-  }) => void
+  }, options?: { signal?: AbortSignal }) => void | Promise<void>
+  unregisterTool?: (name: string) => void
 }
 
 const project: Project = {
@@ -64,6 +67,7 @@ const state = {
   chat: [] as { role: 'user' | 'assistant'; text: string }[],
   promptMode: 'mock' as 'prompt-api' | 'mock',
   webMcpMode: 'mock' as 'webmcp' | 'mock',
+  webMcpRegistrationStarted: false,
 }
 
 function escapeHtml(value: string) {
@@ -97,14 +101,19 @@ const tools: LocalTool[] = [
       const task = project.tasks.find((candidate) => candidate.id === taskId)
       if (!task || !['Todo', 'In progress', 'Done'].includes(status)) return JSON.stringify({ error: 'Task or status not found' })
       task.status = status as TaskStatus
+      void registerWebMcpTools()
       render()
       return JSON.stringify(task)
     },
   },
 ]
 
-function registerWebMcpTools() {
-  const modelContext = (navigator as Navigator & { modelContext?: WebMcpContext }).modelContext
+async function registerWebMcpTools() {
+  if (state.webMcpRegistrationStarted) return
+  state.webMcpRegistrationStarted = true
+  const documentWithModelContext = document as Document & { modelContext?: WebMcpContext }
+  const navigatorWithModelContext = navigator as Navigator & { modelContext?: WebMcpContext }
+  const modelContext = documentWithModelContext.modelContext || navigatorWithModelContext.modelContext
   if (!modelContext?.registerTool) return
 
   const schemas: Record<string, Record<string, unknown>> = {
@@ -118,15 +127,27 @@ function registerWebMcpTools() {
     },
   }
 
-  tools.forEach((tool) => {
-    modelContext.registerTool({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: schemas[tool.name],
-      execute: async (input) => JSON.parse(invokeTool(tool.name, input)),
-    })
-  })
-  state.webMcpMode = 'webmcp'
+  const controller = new AbortController()
+  const registered = await Promise.all(tools.map(async (tool) => {
+    try {
+      await modelContext.registerTool({
+        name: tool.name,
+        title: tool.name.replaceAll('_', ' '),
+        description: tool.description,
+        inputSchema: schemas[tool.name],
+        annotations: { readOnlyHint: tool.name !== 'set_task_status' },
+        execute: async (input) => JSON.parse(invokeTool(tool.name, input)),
+      }, { signal: controller.signal })
+      return true
+    } catch (error) {
+      console.error(`Failed to register WebMCP tool "${tool.name}"`, error)
+      return false
+    }
+  }))
+  if (registered.some(Boolean)) {
+    state.webMcpMode = 'webmcp'
+    render()
+  }
 }
 
 function invokeTool(name: string, input: Record<string, string> = {}) {
@@ -160,7 +181,6 @@ function mockAgent(message: string) {
 
 async function askAgent(message: string) {
   state.chat.push({ role: 'user', text: message })
-  registerWebMcpTools()
   render()
   let answer = mockAgent(message)
   const promptApi = (globalThis as typeof globalThis & { ai?: { languageModel?: { create: (options: Record<string, unknown>) => Promise<{ prompt: (input: string) => Promise<string> }> } } }).ai?.languageModel
