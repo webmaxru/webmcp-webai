@@ -349,7 +349,7 @@ function invokeTool(name: string, input: Record<string, string> = {}) {
 }
 
 function parseToolCall(response: string): ParsedToolCall | null {
-  const match = response.match(/(?:^|\n)\s*tool_code\s+([A-Za-z0-9_.-]+)(?:\s+(\{[\s\S]*?\}))?\s*(?:\n|$)/i)
+  const match = response.match(/tool_code\s+([A-Za-z0-9_.-]+)(?:\s+(\{[\s\S]*?\}))?/i)
   if (!match) return null
   const name = match[1]
   const input = match[2] ? parseToolInput(match[2], name) : {}
