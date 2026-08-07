@@ -352,9 +352,26 @@ function parseToolCall(response: string): ParsedToolCall | null {
   const match = response.match(/(?:^|\n)\s*tool_code\s+([A-Za-z0-9_.-]+)(?:\s+(\{[\s\S]*?\}))?\s*(?:\n|$)/i)
   if (!match) return null
   const name = match[1]
-  const input = match[2] ? JSON.parse(match[2]) as Record<string, string> : {}
+  const input = match[2] ? parseToolInput(match[2], name) : {}
   if (!input || Array.isArray(input) || typeof input !== 'object') throw new Error(`Tool arguments for "${name}" must be a JSON object.`)
   return { name, input }
+}
+
+function parseToolInput(source: string, name: string): Record<string, string> {
+  try {
+    return JSON.parse(source) as Record<string, string>
+  } catch (strictError) {
+    const normalized = source
+      .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')
+      .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_, value: string) => JSON.stringify(value.replace(/\\'/g, "'")))
+    try {
+      debugLog('info', `Normalized non-JSON arguments for ${name}`, source)
+      return JSON.parse(normalized) as Record<string, string>
+    } catch {
+      const detail = strictError instanceof Error ? strictError.message : String(strictError)
+      throw new Error(`Invalid arguments for "${name}". Use a JSON object such as {"query":"high priority"}. Parser error: ${detail}`)
+    }
+  }
 }
 
 async function runAgenticLoop(session: PromptSession, message: string) {
@@ -401,6 +418,19 @@ async function askAgent(message: string) {
   render()
 }
 
+function restartConversation() {
+  state.promptSessionRef?.destroy?.()
+  state.promptSessionRef = null
+  state.promptSessionPromise = null
+  state.promptSessionState = 'idle'
+  state.promptMode = 'mock'
+  state.chat = []
+  state.toolCalls = []
+  state.callId = 0
+  debugLog('info', 'Conversation restarted', 'The chat and Prompt API session were reset.')
+  render()
+}
+
 function renderTask(task: Task) {
   return `<article class="task-row"><div class="task-title"><span class="status-dot ${task.status.toLowerCase().replace(' ', '-')}"></span><strong>${escapeHtml(task.title)}</strong><span class="tag ${task.priority.toLowerCase()}">${task.priority}</span></div><div class="task-meta"><span>${task.owner}</span><span>${task.due}</span><span class="status-text">${task.status}</span></div></article>`
 }
@@ -414,7 +444,7 @@ function render() {
       <div class="layout">
         <aside class="sidebar"><div class="side-label">WORKSPACE</div><button class="nav-item ${state.scene === 'overview' ? 'active' : ''}" data-scene="overview"><span>▦</span> Overview</button><button class="nav-item ${state.scene === 'activity' ? 'active' : ''}" data-scene="activity"><span>↗</span> Activity <b>12</b></button><button class="nav-item ${state.scene === 'debug' ? 'active' : ''}" data-scene="debug"><span>⌘</span> Debug</button><button class="nav-item ${state.scene === 'settings' ? 'active' : ''}" data-scene="settings"><span>⚙</span> Settings</button><div class="sidebar-spacer"></div><div class="connection-card"><span class="connection-icon">◉</span><div><strong>Page tools online</strong><small>${tools.length} tools · no backend</small></div></div><div class="user-card"><span class="avatar small">JL</span><div><strong>Jordan Lee</strong><small>Product lead</small></div><span>⌄</span></div></aside>
         <main class="main-content">${state.scene === 'settings' ? renderSettings() : state.scene === 'activity' ? renderActivity() : state.scene === 'debug' ? renderDebug() : renderOverview(filteredTasks)}</main>
-        <aside class="agent-panel"><div class="agent-heading"><div><span class="eyebrow">ON-DEVICE ASSISTANT</span><h2>Ask the workspace</h2></div><span class="model-badge">${state.promptMode === 'prompt-api' ? 'PROMPT API' : 'DEMO MODEL'}</span></div><p class="agent-description">The model can discover and call tools exposed by this page. Nothing leaves your browser.</p><div class="chat-log">${chat || '<div class="empty-chat"><span>✦</span><p>Try asking:</p><button class="suggestion">“What is the project health?”</button><button class="suggestion">“Find high priority tasks”</button><button class="suggestion">“Who am I signed in as?”</button></div>'}</div><form class="chat-form" id="chat-form"><input id="chat-input" aria-label="Ask the local model" placeholder="Ask about this workspace…" autocomplete="off"><button aria-label="Send message">↗</button></form></aside>
+        <aside class="agent-panel"><div class="agent-heading"><div><span class="eyebrow">ON-DEVICE ASSISTANT</span><h2>Ask the workspace</h2></div><div class="agent-actions"><button class="restart-button" type="button" data-action="restart-conversation">Restart conversation</button><span class="model-badge">${state.promptMode === 'prompt-api' ? 'PROMPT API' : 'DEMO MODEL'}</span></div></div><p class="agent-description">The model can discover and call tools exposed by this page. Nothing leaves your browser.</p><div class="chat-log">${chat || '<div class="empty-chat"><span>✦</span><p>Try asking:</p><button class="suggestion">“What is the project health?”</button><button class="suggestion">“Find high priority tasks”</button><button class="suggestion">“Who am I signed in as?”</button></div>'}</div><form class="chat-form" id="chat-form"><input id="chat-input" aria-label="Ask the local model" placeholder="Ask about this workspace…" autocomplete="off"><button aria-label="Send message">↗</button></form></aside>
       </div>
     </div>`
   bindEvents()
@@ -451,6 +481,7 @@ function bindEvents() {
   document.querySelectorAll<HTMLButtonElement>('.suggestion').forEach((element) => element.addEventListener('click', () => askAgent(element.textContent?.replace(/[“”]/g, '') || 'Give me a summary')))
   document.querySelector<HTMLFormElement>('#chat-form')?.addEventListener('submit', (event) => { event.preventDefault(); const input = document.querySelector<HTMLInputElement>('#chat-input'); if (input?.value.trim()) { const value = input.value.trim(); input.value = ''; void askAgent(value) } })
   document.querySelector<HTMLButtonElement>('[data-demo="summary"]')?.addEventListener('click', () => void askAgent('What is the project health?'))
+  document.querySelector<HTMLButtonElement>('[data-action="restart-conversation"]')?.addEventListener('click', restartConversation)
   document.querySelector<HTMLButtonElement>('[data-action="prepare-model"]')?.addEventListener('click', () => { void ensurePromptSession().catch((error) => debugLog('error', 'Local model preparation failed', error instanceof Error ? error.message : String(error))) })
 }
 
