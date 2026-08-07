@@ -87,6 +87,7 @@ const state = {
   promptDownload: 'unknown',
   promptSessionState: 'idle' as 'idle' | 'creating' | 'ready' | 'error',
   promptSessionRef: null as PromptSession | null,
+  promptSessionPromise: null as Promise<PromptSession> | null,
   promptDownloadProgress: null as number | null,
   debugLogs: [] as { time: string; level: DebugLevel; message: string; detail?: string }[],
 }
@@ -233,6 +234,7 @@ function promptSessionOptions() {
 
 async function ensurePromptSession() {
   if (state.promptSessionRef) return state.promptSessionRef
+  if (state.promptSessionPromise) return state.promptSessionPromise
   const languageModel = (globalThis as typeof globalThis & { LanguageModel?: PromptLanguageModel }).LanguageModel
   if (!languageModel) throw new Error('LanguageModel is unavailable in this browser.')
 
@@ -245,25 +247,35 @@ async function ensurePromptSession() {
   state.promptAvailability = availability
   if (availability === 'unavailable') throw new Error('Prompt API reports this text-and-tools session as unavailable.')
 
-  const session = await languageModel.create({
+  state.promptSessionPromise = languageModel.create({
     ...options,
     initialPrompts: [{ role: 'system', content: 'You are a concise project assistant. Use the page tools when needed. Never invent workspace facts. If a tool is relevant, call it before answering.' }],
     monitor: (monitor: EventTarget) => {
       debugLog('pending', 'Local model download started or is continuing')
       monitor.addEventListener('downloadprogress', (event) => {
         const progress = event as Event & { loaded?: number; total?: number }
-        state.promptDownloadProgress = typeof progress.total === 'number' && progress.total > 0 ? progress.loaded! / progress.total : null
+        if (typeof progress.total === 'number' && progress.total > 0) {
+          state.promptDownloadProgress = Math.max(0, Math.min(1, (progress.loaded ?? 0) / progress.total))
+        }
         state.promptDownload = 'downloading'
         render()
       })
     },
+  }).then((session) => {
+    state.promptSessionRef = session
+    state.promptSessionState = 'ready'
+    state.promptDownload = 'available'
+    debugLog('success', 'Prompt API local model session ready', 'The next prompt will run through the native tool-enabled session.')
+    render()
+    return session
+  }).catch((error) => {
+    state.promptSessionState = 'error'
+    state.promptSessionPromise = null
+    debugLog('error', 'Prompt API session creation failed', error instanceof Error ? error.message : String(error))
+    render()
+    throw error
   })
-  state.promptSessionRef = session
-  state.promptSessionState = 'ready'
-  state.promptDownload = 'available'
-  debugLog('success', 'Prompt API local model session ready', 'The next prompt will run through the native tool-enabled session.')
-  render()
-  return session
+  return state.promptSessionPromise
 }
 
 function invokeTool(name: string, input: Record<string, string> = {}) {
