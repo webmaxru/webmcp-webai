@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Open the local Vite URL. The demo works in every modern browser through its deterministic fallback model. In a browser that exposes the Prompt API, the chat automatically attempts the local model and labels the active mode in the assistant panel. WebMCP registration is represented by the same typed tool registry so the adapter can be connected to the browser's current WebMCP implementation without changing the page tools.
+Open the local Vite URL. The demo works in every modern browser through its deterministic fallback model. In a browser that exposes the Prompt API, the chat automatically attempts the local model and labels the active mode in the assistant panel. In a browser that exposes `navigator.modelContext.registerTool`, the page registers all four tools at startup and the Settings screen reports WebMCP as active. Otherwise, the same registry remains available to the in-page fallback demo.
 
 ## Suggested talk flow
 
@@ -21,4 +21,4 @@ Open the local Vite URL. The demo works in every modern browser through its dete
 
 ## Architecture
 
-`src/main.ts` contains the deliberately small vertical slice: typed local state, a tool registry, a Prompt API capability check, a deterministic fallback agent, and the UI. The tool trace is intentionally visible so the demo makes the data boundary clear instead of hiding it inside a chat component.
+`src/main.ts` contains the deliberately small vertical slice: typed local state, a tool registry, real `navigator.modelContext.registerTool` calls, a Prompt API capability check, a deterministic fallback agent, and the UI. The tool trace is intentionally visible so the demo makes the data boundary clear instead of hiding it inside a chat component.

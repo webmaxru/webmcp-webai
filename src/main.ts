@@ -34,6 +34,15 @@ interface LocalTool {
   run: (input: Record<string, string>) => string
 }
 
+interface WebMcpContext {
+  registerTool: (tool: {
+    name: string
+    description: string
+    inputSchema: Record<string, unknown>
+    execute: (input: Record<string, string>) => Promise<unknown>
+  }) => void
+}
+
 const project: Project = {
   name: 'Atlas launch',
   description: 'A client-side project workspace. The page owns the data, state, and tools.',
@@ -94,6 +103,32 @@ const tools: LocalTool[] = [
   },
 ]
 
+function registerWebMcpTools() {
+  const modelContext = (navigator as Navigator & { modelContext?: WebMcpContext }).modelContext
+  if (!modelContext?.registerTool) return
+
+  const schemas: Record<string, Record<string, unknown>> = {
+    get_project_summary: { type: 'object', properties: {} },
+    search_tasks: { type: 'object', properties: { query: { type: 'string', description: 'Text to match against task fields' } }, required: ['query'] },
+    get_current_user: { type: 'object', properties: {} },
+    set_task_status: {
+      type: 'object',
+      properties: { taskId: { type: 'string' }, status: { type: 'string', enum: ['Todo', 'In progress', 'Done'] } },
+      required: ['taskId', 'status'],
+    },
+  }
+
+  tools.forEach((tool) => {
+    modelContext.registerTool({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: schemas[tool.name],
+      execute: async (input) => JSON.parse(invokeTool(tool.name, input)),
+    })
+  })
+  state.webMcpMode = 'webmcp'
+}
+
 function invokeTool(name: string, input: Record<string, string> = {}) {
   const tool = tools.find((candidate) => candidate.name === name)
   if (!tool) return 'Tool not found'
@@ -125,6 +160,7 @@ function mockAgent(message: string) {
 
 async function askAgent(message: string) {
   state.chat.push({ role: 'user', text: message })
+  registerWebMcpTools()
   render()
   let answer = mockAgent(message)
   const promptApi = (globalThis as typeof globalThis & { ai?: { languageModel?: { create: (options: Record<string, unknown>) => Promise<{ prompt: (input: string) => Promise<string> }> } } }).ai?.languageModel
