@@ -48,8 +48,13 @@ interface WebMcpContext {
 }
 
 interface PromptLanguageModel {
-  availability?: () => Promise<string> | string
-  create: (options: Record<string, unknown>) => Promise<{ prompt: (input: string) => Promise<string> }>
+  availability?: (options?: Record<string, unknown>) => Promise<string> | string
+  create: (options: Record<string, unknown>) => Promise<PromptSession>
+}
+
+interface PromptSession {
+  prompt: (input: string) => Promise<string>
+  destroy?: () => void
 }
 
 const project: Project = {
@@ -80,7 +85,9 @@ const state = {
   promptApiAvailable: false,
   promptAvailability: 'checking',
   promptDownload: 'unknown',
-  promptSession: 'idle' as 'idle' | 'creating' | 'ready' | 'error',
+  promptSessionState: 'idle' as 'idle' | 'creating' | 'ready' | 'error',
+  promptSessionRef: null as PromptSession | null,
+  promptDownloadProgress: null as number | null,
   debugLogs: [] as { time: string; level: DebugLevel; message: string; detail?: string }[],
 }
 
@@ -125,6 +132,27 @@ const tools: LocalTool[] = [
   },
 ]
 
+const toolSchemas: Record<string, Record<string, unknown>> = {
+  get_project_summary: { type: 'object', properties: {} },
+  search_tasks: { type: 'object', properties: { query: { type: 'string', description: 'Text to match against task fields' } }, required: ['query'] },
+  get_current_user: { type: 'object', properties: {} },
+  set_task_status: {
+    type: 'object',
+    properties: { taskId: { type: 'string' }, status: { type: 'string', enum: ['Todo', 'In progress', 'Done'] } },
+    required: ['taskId', 'status'],
+  },
+}
+
+const promptTools = tools.map((tool) => ({
+  name: tool.name,
+  description: tool.description,
+  inputSchema: toolSchemas[tool.name],
+  execute: async (input: Record<string, string>) => {
+    debugLog('info', `Prompt API requested ${tool.name}`, JSON.stringify(input))
+    return invokeTool(tool.name, input)
+  },
+}))
+
 async function registerWebMcpTools() {
   if (state.webMcpRegistrationStarted) return
   state.webMcpRegistrationStarted = true
@@ -139,17 +167,6 @@ async function registerWebMcpTools() {
     return
   }
 
-  const schemas: Record<string, Record<string, unknown>> = {
-    get_project_summary: { type: 'object', properties: {} },
-    search_tasks: { type: 'object', properties: { query: { type: 'string', description: 'Text to match against task fields' } }, required: ['query'] },
-    get_current_user: { type: 'object', properties: {} },
-    set_task_status: {
-      type: 'object',
-      properties: { taskId: { type: 'string' }, status: { type: 'string', enum: ['Todo', 'In progress', 'Done'] } },
-      required: ['taskId', 'status'],
-    },
-  }
-
   const controller = new AbortController()
   const registered = await Promise.all(tools.map(async (tool) => {
     try {
@@ -158,7 +175,7 @@ async function registerWebMcpTools() {
         name: tool.name,
         title: tool.name.replaceAll('_', ' '),
         description: tool.description,
-        inputSchema: schemas[tool.name],
+        inputSchema: toolSchemas[tool.name],
         annotations: { readOnlyHint: tool.name !== 'set_task_status' },
         execute: async (input) => JSON.parse(invokeTool(tool.name, input)),
       }, { signal: controller.signal })
@@ -184,25 +201,70 @@ async function registerWebMcpTools() {
 }
 
 async function detectPromptApi() {
-  const promptApi = (globalThis as typeof globalThis & { ai?: { languageModel?: PromptLanguageModel } }).ai?.languageModel
-  if (!promptApi) {
+  const languageModel = (globalThis as typeof globalThis & { LanguageModel?: PromptLanguageModel }).LanguageModel
+  if (!languageModel) {
     state.promptAvailability = 'unavailable'
     state.promptDownload = 'unavailable'
-    debugLog('error', 'Prompt API unavailable', 'The global ai.languageModel surface is not exposed in this browser.')
+    debugLog('error', 'Prompt API unavailable', 'The global LanguageModel surface is not exposed in this browser.')
     render()
     return
   }
   state.promptApiAvailable = true
   try {
-    state.promptAvailability = 'available'
-    state.promptDownload = promptApi.availability ? await promptApi.availability() : 'unknown'
-    debugLog('success', 'Prompt API detected', `languageModel availability=${state.promptDownload}`)
+    const availability = languageModel.availability ? await languageModel.availability(promptSessionOptions()) : 'unknown'
+    state.promptAvailability = availability
+    state.promptDownload = availability
+    debugLog('success', 'Prompt API detected', `LanguageModel.availability()=${availability}`)
   } catch (error) {
     state.promptAvailability = 'error'
     state.promptDownload = 'error'
     debugLog('error', 'Prompt API availability check failed', error instanceof Error ? error.message : String(error))
   }
   render()
+}
+
+function promptSessionOptions() {
+  return {
+    expectedInputs: [{ type: 'text', languages: ['en'] }],
+    expectedOutputs: [{ type: 'text', languages: ['en'] }],
+    tools: promptTools,
+  }
+}
+
+async function ensurePromptSession() {
+  if (state.promptSessionRef) return state.promptSessionRef
+  const languageModel = (globalThis as typeof globalThis & { LanguageModel?: PromptLanguageModel }).LanguageModel
+  if (!languageModel) throw new Error('LanguageModel is unavailable in this browser.')
+
+  state.promptSessionState = 'creating'
+  state.promptDownloadProgress = null
+  debugLog('pending', 'Creating Prompt API session', 'This user-initiated call may start downloading the local model.')
+  render()
+  const options = promptSessionOptions()
+  const availability = languageModel.availability ? await languageModel.availability(options) : 'unknown'
+  state.promptAvailability = availability
+  if (availability === 'unavailable') throw new Error('Prompt API reports this text-and-tools session as unavailable.')
+
+  const session = await languageModel.create({
+    ...options,
+    initialPrompts: [{ role: 'system', content: 'You are a concise project assistant. Use the page tools when needed. Never invent workspace facts. If a tool is relevant, call it before answering.' }],
+    monitor: (monitor: EventTarget) => {
+      debugLog('pending', 'Local model download started or is continuing')
+      monitor.addEventListener('downloadprogress', (event) => {
+        const progress = event as Event & { loaded?: number; total?: number }
+        state.promptDownloadProgress = typeof progress.total === 'number' && progress.total > 0 ? progress.loaded! / progress.total : null
+        state.promptDownload = 'downloading'
+        debugLog('pending', 'Local model download progress', state.promptDownloadProgress === null ? 'progress unavailable' : `${Math.round(state.promptDownloadProgress * 100)}%`)
+        render()
+      })
+    },
+  })
+  state.promptSessionRef = session
+  state.promptSessionState = 'ready'
+  state.promptDownload = 'available'
+  debugLog('success', 'Prompt API local model session ready', 'The next prompt will run through the native tool-enabled session.')
+  render()
+  return session
 }
 
 function invokeTool(name: string, input: Record<string, string> = {}) {
@@ -218,44 +280,22 @@ function invokeTool(name: string, input: Record<string, string> = {}) {
   return output
 }
 
-function mockAgent(message: string) {
-  const lower = message.toLowerCase()
-  if (lower.includes('who') || lower.includes('permission') || lower.includes('user')) {
-    const user = invokeTool('get_current_user')
-    return `You are looking at the workspace as **Jordan Lee**, Product lead. The local session grants ${JSON.parse(user).permissions.join(' and ')}.`
-  }
-  if (lower.includes('summary') || lower.includes('health') || lower.includes('status')) {
-    const summary = JSON.parse(invokeTool('get_project_summary'))
-    return `**${summary.project}** is **${summary.health.toLowerCase()}** with ${summary.tasks} tasks. ${summary.inProgress} are currently in progress.`
-  }
-  const query = message.replace(/find|search|show|which|tasks|task/gi, '').trim() || message
-  const matches = JSON.parse(invokeTool('search_tasks', { query }))
-  if (!matches.length) return `I searched the page's task data but found no matches for “${query}”.`
-  return `I found ${matches.length} matching task${matches.length === 1 ? '' : 's'}: ${matches.map((task: Task) => `**${task.title}** (${task.status}, ${task.owner})`).join(', ')}.`
-}
-
 async function askAgent(message: string) {
-  state.chat.push({ role: 'user', text: message })
-  render()
-  let answer = mockAgent(message)
-  const promptApi = (globalThis as typeof globalThis & { ai?: { languageModel?: PromptLanguageModel } }).ai?.languageModel
-  if (promptApi) {
-    try {
-      state.promptSession = 'creating'
-      debugLog('pending', 'Creating local Prompt API session', 'The model may need to download before the first prompt.')
-      render()
-      const session = await promptApi.create({ systemPrompt: 'You are a concise project assistant. Use the provided page tools when answering.' })
-      debugLog('success', 'Local Prompt API session ready')
-      answer = await session.prompt(message)
-      state.promptMode = 'prompt-api'
-      state.promptSession = 'ready'
-      debugLog('success', 'Prompt API response received', 'Response generated on-device.')
-    } catch {
-      state.promptMode = 'mock'
-      state.promptSession = 'error'
-      debugLog('error', 'Prompt API request failed', 'Using deterministic demo model fallback.')
-    }
-  }
+ state.chat.push({ role: 'user', text: message })
+ render()
+ let answer: string
+ try {
+   const session = await ensurePromptSession()
+   debugLog('pending', 'Sending prompt to native local model', message)
+   answer = await session.prompt(message)
+   state.promptMode = 'prompt-api'
+   debugLog('success', 'Prompt API response received', 'Response generated by the native local model.')
+ } catch (error) {
+   state.promptSessionState = 'error'
+   const messageText = error instanceof Error ? error.message : String(error)
+   debugLog('error', 'Prompt API request failed', messageText)
+   answer = `Prompt API is not available for this request: ${messageText}`
+ }
   state.chat.push({ role: 'assistant', text: answer })
   render()
 }
@@ -295,7 +335,8 @@ function renderDebug() {
   const toolTrace = state.toolCalls.map((call) => `<div class="trace-row"><span class="trace-number">${String(call.id).padStart(2, '0')}</span><div><strong>${escapeHtml(call.name)}</strong><small>Input: ${escapeHtml(call.input)} · ${call.status === 'running' ? 'Calling page tool…' : `Returned ${call.output.length} chars`}</small></div><span class="trace-status">${call.status === 'complete' ? '✓' : '…'}</span></div>`).join('')
   const logs = state.debugLogs.map((entry) => `<div class="debug-log ${entry.level}"><time>${entry.time}</time><span class="log-symbol">${entry.level === 'success' ? '✓' : entry.level === 'error' ? '!' : entry.level === 'pending' ? '…' : '·'}</span><div><strong>${escapeHtml(entry.message)}</strong>${entry.detail ? `<small>${escapeHtml(entry.detail)}</small>` : ''}</div></div>`).join('')
   const status = (value: string, good: boolean) => `<span class="status-chip ${good ? 'good' : 'muted'}">${value}</span>`
-  return `<section class="content-inner debug-page"><div class="page-header"><div><span class="eyebrow">SYSTEM / DEBUG CONSOLE</span><h1>Runtime diagnostics</h1><p>Everything below is measured in this tab. No server telemetry or external model is involved.</p></div></div><div class="debug-status-grid"><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">WEBMCP</span>${status(state.webMcpRegistration, state.webMcpRegistration === 'complete')}</div><div class="debug-big">${state.webMcpRegisteredTools.length}<em>/ ${tools.length} tools</em></div><div class="status-line"><span>Secure context</span>${status(secure ? 'yes' : 'no', secure)}</div><div class="status-line"><span>document.modelContext</span>${status(documentContext ? 'available' : 'missing', documentContext)}</div><div class="status-line"><span>navigator.modelContext</span>${status(navigatorContext ? 'available (legacy)' : 'missing', navigatorContext)}</div><div class="status-line"><span>Registration errors</span>${status(String(state.webMcpErrors.length), state.webMcpErrors.length === 0)}</div></div><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">PROMPT API</span>${status(state.promptAvailability, state.promptApiAvailable)}</div><div class="debug-big">${state.promptSession}<em> session</em></div><div class="status-line"><span>ai.languageModel</span>${status(state.promptApiAvailable ? 'available' : 'missing', state.promptApiAvailable)}</div><div class="status-line"><span>Model download</span>${status(state.promptDownload, state.promptDownload === 'available')}</div><div class="status-line"><span>Last model path</span>${status(state.promptMode === 'prompt-api' ? 'local response' : 'fallback', state.promptMode === 'prompt-api')}</div><small class="debug-help">Download status comes from the browser's Prompt API availability signal. Creating a session may trigger a local model download.</small></div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">TOOL INVOCATIONS</span><h2>Execution trace</h2></div><span class="tool-count">${state.toolCalls.length}</span></div><div class="trace-list">${toolTrace || '<div class="trace-empty">No tools called yet</div>'}</div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">RUNTIME LOG</span><h2>Prompt API + WebMCP events</h2></div><span class="tool-count">${state.debugLogs.length}</span></div><div class="debug-log-list">${logs || '<div class="trace-empty">Waiting for page diagnostics…</div>'}</div></div></section>`
+  const downloadLabel = state.promptDownloadProgress === null ? state.promptDownload : `${state.promptDownload} ${Math.round(state.promptDownloadProgress * 100)}%`
+  return `<section class="content-inner debug-page"><div class="page-header"><div><span class="eyebrow">SYSTEM / DEBUG CONSOLE</span><h1>Runtime diagnostics</h1><p>Everything below is measured in this tab. No server telemetry or external model is involved.</p></div><button class="primary-button" data-action="prepare-model">↥ Prepare local model</button></div><div class="debug-status-grid"><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">WEBMCP</span>${status(state.webMcpRegistration, state.webMcpRegistration === 'complete')}</div><div class="debug-big">${state.webMcpRegisteredTools.length}<em>/ ${tools.length} tools</em></div><div class="status-line"><span>Secure context</span>${status(secure ? 'yes' : 'no', secure)}</div><div class="status-line"><span>document.modelContext</span>${status(documentContext ? 'available' : 'missing', documentContext)}</div><div class="status-line"><span>navigator.modelContext</span>${status(navigatorContext ? 'available (legacy)' : 'missing', navigatorContext)}</div><div class="status-line"><span>Registration errors</span>${status(String(state.webMcpErrors.length), state.webMcpErrors.length === 0)}</div></div><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">PROMPT API</span>${status(state.promptAvailability, state.promptApiAvailable)}</div><div class="debug-big">${state.promptSessionState}<em> session</em></div><div class="status-line"><span>LanguageModel</span>${status(state.promptApiAvailable ? 'available' : 'missing', state.promptApiAvailable)}</div><div class="status-line"><span>Model download</span>${status(downloadLabel, state.promptDownload === 'available')}</div><div class="status-line"><span>Last model path</span>${status(state.promptMode === 'prompt-api' ? 'native response' : 'not used', state.promptMode === 'prompt-api')}</div><small class="debug-help">Availability is passive. Use “Prepare local model” or send a prompt to call LanguageModel.create() and begin downloading when needed. The session includes the page tools.</small></div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">TOOL INVOCATIONS</span><h2>Execution trace</h2></div><span class="tool-count">${state.toolCalls.length}</span></div><div class="trace-list">${toolTrace || '<div class="trace-empty">No tools called yet</div>'}</div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">RUNTIME LOG</span><h2>Prompt API + WebMCP events</h2></div><span class="tool-count">${state.debugLogs.length}</span></div><div class="debug-log-list">${logs || '<div class="trace-empty">Waiting for page diagnostics…</div>'}</div></div></section>`
 }
 
 function renderSettings() {
@@ -308,6 +349,7 @@ function bindEvents() {
   document.querySelectorAll<HTMLButtonElement>('.suggestion').forEach((element) => element.addEventListener('click', () => askAgent(element.textContent?.replace(/[“”]/g, '') || 'Give me a summary')))
   document.querySelector<HTMLFormElement>('#chat-form')?.addEventListener('submit', (event) => { event.preventDefault(); const input = document.querySelector<HTMLInputElement>('#chat-input'); if (input?.value.trim()) { const value = input.value.trim(); input.value = ''; void askAgent(value) } })
   document.querySelector<HTMLButtonElement>('[data-demo="summary"]')?.addEventListener('click', () => void askAgent('What is the project health?'))
+  document.querySelector<HTMLButtonElement>('[data-action="prepare-model"]')?.addEventListener('click', () => { void ensurePromptSession().catch((error) => debugLog('error', 'Local model preparation failed', error instanceof Error ? error.message : String(error))) })
 }
 
 void registerWebMcpTools()

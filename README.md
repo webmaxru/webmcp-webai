@@ -9,7 +9,9 @@ npm install
 npm run dev
 ```
 
-Open the local Vite URL. The demo works in every modern browser through its deterministic fallback model. In a browser that exposes the Prompt API, the chat automatically attempts the local model and labels the active mode in the assistant panel. In a browser that exposes `navigator.modelContext.registerTool`, the page registers all four tools at startup and the Settings screen reports WebMCP as active. Otherwise, the same registry remains available to the in-page fallback demo.
+Open the local Vite URL. The chat uses the native `LanguageModel` Prompt API only; it does not synthesize answers when the API is unavailable. On the first prompt, or via **Debug → Prepare local model**, the app calls `LanguageModel.create()` with the page tools and a download monitor. In a browser that exposes `document.modelContext.registerTool`, the page registers all four tools at startup.
+
+For Chrome preview testing, use a supported Chrome build, enable the Prompt API/on-device model flags and `chrome://flags/#enable-webmcp-testing`, then reload the HTTPS site. The **Debug** panel shows the exact availability, download, session, and registration states. See `chrome://on-device-internals` for browser-level model download diagnostics.
 
 ## Suggested talk flow
 
@@ -18,8 +20,8 @@ Open the local Vite URL. The demo works in every modern browser through its dete
 3. Ask “Find high priority tasks”: the page runs `search_tasks` against local state and returns the result.
 4. Open **Activity** to show the calls are inspectable, then **Settings** to show the local auth boundary and browser capability status.
 5. Open **Debug** to show secure-context checks, the active `document.modelContext`/legacy fallback surface, per-tool registration results, Prompt API availability, local model download status, and the full runtime log.
-6. Explain that the mock path is only a presentation fallback; the architecture has no server-side model, secret, or data replication requirement.
+6. Explain that unsupported browsers report an explicit capability error; there is no fake assistant response, server-side model, secret, or data replication requirement.
 
 ## Architecture
 
-`src/main.ts` contains the deliberately small vertical slice: typed local state, a tool registry, real `navigator.modelContext.registerTool` calls, a Prompt API capability check, a deterministic fallback agent, and the UI. The tool trace is intentionally visible so the demo makes the data boundary clear instead of hiding it inside a chat component.
+`src/main.ts` contains the deliberately small vertical slice: typed local state, real WebMCP registration, a native `LanguageModel.availability()`/`create()` session wrapper with tool-enabled prompts and download monitoring, and the UI. The tool trace is intentionally visible so the demo makes the data boundary clear instead of hiding it inside a chat component.
