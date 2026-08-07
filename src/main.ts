@@ -374,13 +374,32 @@ function parseToolInput(source: string, name: string): Record<string, string> {
   }
 }
 
+function requiredToolInstruction(message: string) {
+  const normalized = message.toLowerCase()
+  if (normalized.includes('high priority')) return 'tool_code search_tasks {"query":"high priority"}'
+  if (normalized.includes('project health') || normalized.includes('project status')) return 'tool_code get_project_summary {}'
+  if (normalized.includes('signed in') || normalized.includes('logged in') || normalized.includes('current user')) return 'tool_code get_current_user {}'
+  return null
+}
+
 async function runAgenticLoop(session: PromptSession, message: string) {
   let response = await session.prompt(message)
   const registeredNames = new Set(state.webMcpToolCatalog.map((tool) => tool.name))
+  let correctionAttempted = false
 
   for (let step = 0; step < 4; step += 1) {
     const toolCall = parseToolCall(response)
-    if (!toolCall) return response
+    if (!toolCall) {
+      const requiredTool = requiredToolInstruction(message)
+      if (requiredTool && !correctionAttempted) {
+        correctionAttempted = true
+        debugLog('pending', 'Model answered without using a required workspace tool', `Requesting ${requiredTool}`)
+        response = await session.prompt(`Do not answer from memory. This request requires a live page-tool result. Emit exactly this tool call on its own line, with no Markdown fences or punctuation:
+${requiredTool}`)
+        continue
+      }
+      return response
+    }
     if (!registeredNames.has(toolCall.name)) {
       debugLog('error', 'Model requested an unregistered tool', toolCall.name)
       throw new Error(`The model requested "${toolCall.name}", but that tool is not registered on this page.`)
@@ -444,7 +463,7 @@ function render() {
       <div class="layout">
         <aside class="sidebar"><div class="side-label">WORKSPACE</div><button class="nav-item ${state.scene === 'overview' ? 'active' : ''}" data-scene="overview"><span>▦</span> Overview</button><button class="nav-item ${state.scene === 'activity' ? 'active' : ''}" data-scene="activity"><span>↗</span> Activity <b>12</b></button><button class="nav-item ${state.scene === 'debug' ? 'active' : ''}" data-scene="debug"><span>⌘</span> Debug</button><button class="nav-item ${state.scene === 'settings' ? 'active' : ''}" data-scene="settings"><span>⚙</span> Settings</button><div class="sidebar-spacer"></div><div class="connection-card"><span class="connection-icon">◉</span><div><strong>Page tools online</strong><small>${tools.length} tools · no backend</small></div></div><div class="user-card"><span class="avatar small">JL</span><div><strong>Jordan Lee</strong><small>Product lead</small></div><span>⌄</span></div></aside>
         <main class="main-content">${state.scene === 'settings' ? renderSettings() : state.scene === 'activity' ? renderActivity() : state.scene === 'debug' ? renderDebug() : renderOverview(filteredTasks)}</main>
-        <aside class="agent-panel"><div class="agent-heading"><div><span class="eyebrow">ON-DEVICE ASSISTANT</span><h2>Ask the workspace</h2></div><div class="agent-actions"><button class="restart-button" type="button" data-action="restart-conversation">Restart conversation</button><span class="model-badge">${state.promptMode === 'prompt-api' ? 'PROMPT API' : 'DEMO MODEL'}</span></div></div><p class="agent-description">The model can discover and call tools exposed by this page. Nothing leaves your browser.</p><div class="chat-log">${chat || '<div class="empty-chat"><span>✦</span><p>Try asking:</p><button class="suggestion">“What is the project health?”</button><button class="suggestion">“Find high priority tasks”</button><button class="suggestion">“Who am I signed in as?”</button></div>'}</div><form class="chat-form" id="chat-form"><input id="chat-input" aria-label="Ask the local model" placeholder="Ask about this workspace…" autocomplete="off"><button aria-label="Send message">↗</button></form></aside>
+        <aside class="agent-panel"><div class="agent-heading"><div><span class="eyebrow">ON-DEVICE ASSISTANT</span><h2>Ask the workspace</h2></div><div class="agent-actions"><button class="restart-button" type="button" data-action="restart-conversation">Restart conversation</button><span class="model-badge">${state.promptMode === 'prompt-api' ? 'PROMPT API' : 'DEMO MODEL'}</span></div></div><p class="agent-description">The model can discover and call tools exposed by this page. Nothing leaves your browser.</p><div class="chat-log">${chat || '<div class="empty-chat"><span>✦</span><p>Try asking:</p></div>'}</div><form class="chat-form" id="chat-form"><input id="chat-input" aria-label="Ask the local model" placeholder="Ask about this workspace…" autocomplete="off"><button aria-label="Send message">↗</button></form><div class="conversation-starters" aria-label="Conversation starters"><button class="starter-pill" type="button" data-prompt="What is the project health?">Project health</button><button class="starter-pill" type="button" data-prompt="Find high priority tasks">High priority tasks</button><button class="starter-pill" type="button" data-prompt="Who am I signed in as?">Signed-in user</button></div></aside>
       </div>
     </div>`
   bindEvents()
@@ -478,7 +497,7 @@ function renderSettings() {
 function bindEvents() {
   document.querySelectorAll<HTMLElement>('[data-scene]').forEach((element) => element.addEventListener('click', () => { state.scene = element.dataset.scene as Scene; render() }))
   document.querySelectorAll<HTMLElement>('[data-filter]').forEach((element) => element.addEventListener('click', () => { state.filter = element.dataset.filter!; render() }))
-  document.querySelectorAll<HTMLButtonElement>('.suggestion').forEach((element) => element.addEventListener('click', () => askAgent(element.textContent?.replace(/[“”]/g, '') || 'Give me a summary')))
+  document.querySelectorAll<HTMLButtonElement>('[data-prompt]').forEach((element) => element.addEventListener('click', () => { void askAgent(element.dataset.prompt || 'Give me a summary') }))
   document.querySelector<HTMLFormElement>('#chat-form')?.addEventListener('submit', (event) => { event.preventDefault(); const input = document.querySelector<HTMLInputElement>('#chat-input'); if (input?.value.trim()) { const value = input.value.trim(); input.value = ''; void askAgent(value) } })
   document.querySelector<HTMLButtonElement>('[data-demo="summary"]')?.addEventListener('click', () => void askAgent('What is the project health?'))
   document.querySelector<HTMLButtonElement>('[data-action="restart-conversation"]')?.addEventListener('click', restartConversation)
