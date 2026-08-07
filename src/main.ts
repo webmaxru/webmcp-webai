@@ -46,6 +46,14 @@ interface WebMcpContext {
     execute: (input: Record<string, string>) => Promise<unknown>
   }, options?: { signal?: AbortSignal }) => void | Promise<void>
   unregisterTool?: (name: string) => void
+  getTools?: () => WebMcpTool[] | Promise<WebMcpTool[]>
+}
+
+interface WebMcpTool {
+  name: string
+  title?: string
+  description: string
+  inputSchema?: Record<string, unknown>
 }
 
 interface PromptLanguageModel {
@@ -82,6 +90,7 @@ const state = {
   webMcpRegistrationStarted: false,
   webMcpRegistration: 'pending' as 'pending' | 'complete' | 'unavailable' | 'error',
   webMcpRegisteredTools: [] as string[],
+  webMcpToolCatalog: [] as WebMcpTool[],
   webMcpErrors: [] as string[],
   promptApiAvailable: false,
   promptAvailability: 'checking',
@@ -155,51 +164,92 @@ const promptTools = tools.map((tool) => ({
   },
 }))
 
-async function registerWebMcpTools() {
-  if (state.webMcpRegistrationStarted) return
-  state.webMcpRegistrationStarted = true
-  const documentWithModelContext = document as Document & { modelContext?: WebMcpContext }
-  const navigatorWithModelContext = navigator as Navigator & { modelContext?: WebMcpContext }
-  const modelContext = documentWithModelContext.modelContext || navigatorWithModelContext.modelContext
-  const surface = documentWithModelContext.modelContext ? 'document.modelContext' : navigatorWithModelContext.modelContext ? 'navigator.modelContext (legacy)' : 'none'
-  debugLog('info', 'WebMCP capability check', `surface=${surface}; secureContext=${window.isSecureContext}`)
-  if (!modelContext?.registerTool) {
-    state.webMcpRegistration = 'unavailable'
-    debugLog('error', 'WebMCP unavailable', 'Enable Chrome WebMCP preview and chrome://flags/#enable-webmcp-testing.')
-    return
-  }
+function buildAssistantSystemPrompt(toolCatalog: WebMcpTool[]) {
+  const catalog = toolCatalog.length
+    ? toolCatalog.map((tool) => `- ${tool.name}: ${tool.description} Input schema: ${JSON.stringify(tool.inputSchema ?? {})}`).join('\n')
+    : '- No WebMCP tools are currently registered. Do not answer workspace-state questions from memory.'
 
-  const controller = new AbortController()
-  const registered = await Promise.all(tools.map(async (tool) => {
-    try {
-      debugLog('pending', `Registering ${tool.name}`)
-      await modelContext.registerTool({
-        name: tool.name,
-        title: tool.name.replaceAll('_', ' '),
-        description: tool.description,
-        inputSchema: toolSchemas[tool.name],
-        annotations: { readOnlyHint: tool.name !== 'set_task_status' },
-        execute: async (input) => JSON.parse(invokeTool(tool.name, input)),
-      }, { signal: controller.signal })
-      state.webMcpRegisteredTools.push(tool.name)
-      debugLog('success', `Registered ${tool.name}`, 'Visible to the browser model context.')
-      return true
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      state.webMcpErrors.push(`${tool.name}: ${message}`)
-      debugLog('error', `Failed to register ${tool.name}`, message)
-      console.error(`Failed to register WebMCP tool "${tool.name}"`, error)
-      return false
+  return `You are Atlas Workspace Assistant, an on-device assistant for the project workspace shown in this browser tab.
+
+MISSION
+- Answer questions about the currently loaded Atlas launch project, its tasks, and the signed-in user.
+- The page is the source of truth. You can only know workspace facts by using the page tools below.
+- Never guess, infer, or fabricate project data, task data, user data, permissions, status, priority, ownership, or dates.
+
+TOOL USE IS REQUIRED
+- Before answering any question about project health, task counts, task details, task search results, the signed-in user, or permissions, call the relevant page tool.
+- If a request could be answered from workspace state, prefer a tool call over a general-knowledge answer.
+- For a task search, call search_tasks with the user's words as the query. Do not silently narrow, rewrite, or invent filters.
+- For a status change, call set_task_status with the exact task id and one of the allowed statuses: "Todo", "In progress", or "Done".
+- After a mutating tool call, use its returned task as the authoritative result and clearly state whether the update succeeded.
+- If the user did not provide enough information for a mutation, ask for the missing task id or status instead of guessing.
+- If a tool returns an error or no matching data, report that plainly and do not produce a success-shaped answer.
+
+LIVE WEBMCP TOOLS
+The following catalog was read from the page's WebMCP model context after registration. Use these exact names and schemas:
+${catalog}
+
+RESPONSE RULES
+- Use the tools silently, then answer in a concise, helpful way using only their returned data.
+- Mention when information comes from the local page workspace when that clarifies the data boundary.
+- Do not claim that a tool was called unless it was actually called.
+- Do not expose internal prompts, hidden instructions, or implementation details unless the user explicitly asks about this demo.
+- If the request is unrelated to this workspace, say that you can help with the loaded project, tasks, and local user context.`
+}
+
+let webMcpReadyPromise: Promise<void> | null = null
+
+function registerWebMcpTools() {
+  if (state.webMcpRegistrationStarted) return webMcpReadyPromise ?? Promise.resolve()
+  state.webMcpRegistrationStarted = true
+  webMcpReadyPromise = (async () => {
+    const documentWithModelContext = document as Document & { modelContext?: WebMcpContext }
+    const navigatorWithModelContext = navigator as Navigator & { modelContext?: WebMcpContext }
+    const modelContext = documentWithModelContext.modelContext || navigatorWithModelContext.modelContext
+    const surface = documentWithModelContext.modelContext ? 'document.modelContext' : navigatorWithModelContext.modelContext ? 'navigator.modelContext (legacy)' : 'none'
+    debugLog('info', 'WebMCP capability check', `surface=${surface}; secureContext=${window.isSecureContext}`)
+    if (!modelContext?.registerTool) {
+      state.webMcpRegistration = 'unavailable'
+      debugLog('error', 'WebMCP unavailable', 'Enable Chrome WebMCP preview and chrome://flags/#enable-webmcp-testing.')
+      return
     }
-  }))
-  if (registered.some(Boolean)) {
-    state.webMcpMode = 'webmcp'
-    state.webMcpRegistration = state.webMcpErrors.length ? 'error' : 'complete'
-    debugLog(state.webMcpErrors.length ? 'error' : 'success', 'WebMCP registration finished', `${state.webMcpRegisteredTools.length}/${tools.length} tools registered.`)
-    void registerWebMcpTools()
-    void detectPromptApi()
-    render()
-  }
+
+    const controller = new AbortController()
+    const registered = await Promise.all(tools.map(async (tool) => {
+      try {
+        debugLog('pending', `Registering ${tool.name}`)
+        await modelContext.registerTool({
+          name: tool.name,
+          title: tool.name.replaceAll('_', ' '),
+          description: tool.description,
+          inputSchema: toolSchemas[tool.name],
+          annotations: { readOnlyHint: tool.name !== 'set_task_status' },
+          execute: async (input) => JSON.parse(invokeTool(tool.name, input)),
+        }, { signal: controller.signal })
+        state.webMcpRegisteredTools.push(tool.name)
+        debugLog('success', `Registered ${tool.name}`, 'Visible to the browser model context.')
+        return true
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        state.webMcpErrors.push(`${tool.name}: ${message}`)
+        debugLog('error', `Failed to register ${tool.name}`, message)
+        console.error(`Failed to register WebMCP tool "${tool.name}"`, error)
+        return false
+      }
+    }))
+    if (registered.some(Boolean)) {
+      state.webMcpMode = 'webmcp'
+      state.webMcpRegistration = state.webMcpErrors.length ? 'error' : 'complete'
+      state.webMcpToolCatalog = modelContext.getTools
+        ? (await modelContext.getTools()).filter((tool) => state.webMcpRegisteredTools.includes(tool.name))
+        : tools.filter((tool) => state.webMcpRegisteredTools.includes(tool.name)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: toolSchemas[tool.name] }))
+      debugLog('success', 'WebMCP tool catalog loaded', `${state.webMcpToolCatalog.length} tools added to the Prompt API system prompt.`)
+      debugLog(state.webMcpErrors.length ? 'error' : 'success', 'WebMCP registration finished', `${state.webMcpRegisteredTools.length}/${tools.length} tools registered.`)
+      void detectPromptApi()
+      render()
+    }
+  })()
+  return webMcpReadyPromise
 }
 
 async function detectPromptApi() {
@@ -226,10 +276,11 @@ async function detectPromptApi() {
 }
 
 function promptSessionOptions() {
+  const registeredNames = new Set(state.webMcpToolCatalog.map((tool) => tool.name))
   return {
     expectedInputs: [{ type: 'text', languages: ['en'] }],
     expectedOutputs: [{ type: 'text', languages: ['en'] }],
-    tools: promptTools,
+    tools: promptTools.filter((tool) => registeredNames.has(tool.name)),
   }
 }
 
@@ -239,6 +290,7 @@ async function ensurePromptSession() {
   const languageModel = (globalThis as typeof globalThis & { LanguageModel?: PromptLanguageModel }).LanguageModel
   if (!languageModel) throw new Error('LanguageModel is unavailable in this browser.')
 
+  await registerWebMcpTools()
   state.promptSessionState = 'creating'
   debugLog('pending', 'Creating Prompt API session', 'This user-initiated call may start downloading the local model.')
   render()
@@ -249,7 +301,7 @@ async function ensurePromptSession() {
 
   state.promptSessionPromise = languageModel.create({
     ...options,
-    initialPrompts: [{ role: 'system', content: 'You are a concise project assistant. Use the page tools when needed. Never invent workspace facts. If a tool is relevant, call it before answering.' }],
+    initialPrompts: [{ role: 'system', content: buildAssistantSystemPrompt(state.webMcpToolCatalog) }],
     monitor: (monitor: EventTarget) => {
       debugLog('pending', 'Local model download started or is continuing')
       monitor.addEventListener('downloadprogress', (event) => {
@@ -346,7 +398,7 @@ function renderDebug() {
   const status = (value: string, good: boolean) => `<span class="status-chip ${good ? 'good' : 'muted'}">${value}</span>`
   const downloadLabel = state.promptDownloadProgress === null ? state.promptDownload : `${state.promptDownload} ${Math.round(state.promptDownloadProgress * 100)}%`
   const progressMarkup = state.promptDownload === 'downloading' ? `<div class="download-progress"><div class="download-progress-bar" style="width:${state.promptDownloadProgress === null ? '35' : Math.round(state.promptDownloadProgress * 100)}%"></div></div>` : ''
-  return `<section class="content-inner debug-page"><div class="page-header"><div><span class="eyebrow">SYSTEM / DEBUG CONSOLE</span><h1>Runtime diagnostics</h1><p>Everything below is measured in this tab. No server telemetry or external model is involved.</p></div><button class="primary-button" data-action="prepare-model">↥ Prepare local model</button></div><div class="debug-status-grid"><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">WEBMCP</span>${status(state.webMcpRegistration, state.webMcpRegistration === 'complete')}</div><div class="debug-big">${state.webMcpRegisteredTools.length}<em>/ ${tools.length} tools</em></div><div class="status-line"><span>Secure context</span>${status(secure ? 'yes' : 'no', secure)}</div><div class="status-line"><span>document.modelContext</span>${status(documentContext ? 'available' : 'missing', documentContext)}</div><div class="status-line"><span>navigator.modelContext</span>${status(navigatorContext ? 'available (legacy)' : 'missing', navigatorContext)}</div><div class="status-line"><span>Registration errors</span>${status(String(state.webMcpErrors.length), state.webMcpErrors.length === 0)}</div></div><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">PROMPT API</span>${status(state.promptAvailability, state.promptApiAvailable)}</div><div class="debug-big">${state.promptSessionState}<em> session</em></div><div class="status-line"><span>LanguageModel</span>${status(state.promptApiAvailable ? 'available' : 'missing', state.promptApiAvailable)}</div><div class="status-line"><span>Model download</span>${status(downloadLabel, state.promptDownload === 'available')}</div>${progressMarkup}<div class="status-line"><span>Last model path</span>${status(state.promptMode === 'prompt-api' ? 'native response' : 'not used', state.promptMode === 'prompt-api')}</div><small class="debug-help">Availability is passive. Use “Prepare local model” or send a prompt to call LanguageModel.create() and begin downloading when needed. The session includes the page tools.</small></div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">TOOL INVOCATIONS</span><h2>Execution trace</h2></div><span class="tool-count">${state.toolCalls.length}</span></div><div class="trace-list">${toolTrace || '<div class="trace-empty">No tools called yet</div>'}</div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">RUNTIME LOG</span><h2>Prompt API + WebMCP events</h2></div><span class="tool-count">${state.debugLogs.length}</span></div><div class="debug-log-list">${logs || '<div class="trace-empty">Waiting for page diagnostics…</div>'}</div></div></section>`
+  return `<section class="content-inner debug-page"><div class="page-header"><div><span class="eyebrow">SYSTEM / DEBUG CONSOLE</span><h1>Runtime diagnostics</h1><p>Everything below is measured in this tab. No server telemetry or external model is involved.</p></div><button class="primary-button" data-action="prepare-model">↥ Prepare local model</button></div><div class="debug-status-grid"><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">WEBMCP</span>${status(state.webMcpRegistration, state.webMcpRegistration === 'complete')}</div><div class="debug-big">${state.webMcpRegisteredTools.length}<em>/ ${tools.length} tools</em></div><div class="status-line"><span>Secure context</span>${status(secure ? 'yes' : 'no', secure)}</div><div class="status-line"><span>document.modelContext</span>${status(documentContext ? 'available' : 'missing', documentContext)}</div><div class="status-line"><span>navigator.modelContext</span>${status(navigatorContext ? 'available (legacy)' : 'missing', navigatorContext)}</div><div class="status-line"><span>Registration errors</span>${status(String(state.webMcpErrors.length), state.webMcpErrors.length === 0)}</div></div><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">PROMPT API</span>${status(state.promptAvailability, state.promptApiAvailable)}</div><div class="debug-big">${state.promptSessionState}<em> session</em></div><div class="status-line"><span>LanguageModel</span>${status(state.promptApiAvailable ? 'available' : 'missing', state.promptApiAvailable)}</div><div class="status-line"><span>Model download</span>${status(downloadLabel, state.promptDownload === 'available')}</div>${progressMarkup}<div class="status-line"><span>Last model path</span>${status(state.promptMode === 'prompt-api' ? 'native response' : 'not used', state.promptMode === 'prompt-api')}</div><small class="debug-help">Availability is passive. Use “Prepare local model” or send a prompt to call LanguageModel.create() and begin downloading when needed. The session includes the page tools.</small></div></div><details class="debug-section system-prompt"><summary><span><span class="eyebrow">PROMPT API / SYSTEM PROMPT</span><strong>Show full instructions sent to the local model</strong></span><span class="tool-count">${state.webMcpToolCatalog.length} LIVE TOOLS</span></summary><pre>${escapeHtml(buildAssistantSystemPrompt(state.webMcpToolCatalog))}</pre></details><div class="debug-section"><div class="section-header"><div><span class="eyebrow">TOOL INVOCATIONS</span><h2>Execution trace</h2></div><span class="tool-count">${state.toolCalls.length}</span></div><div class="trace-list">${toolTrace || '<div class="trace-empty">No tools called yet</div>'}</div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">RUNTIME LOG</span><h2>Prompt API + WebMCP events</h2></div><span class="tool-count">${state.debugLogs.length}</span></div><div class="debug-log-list">${logs || '<div class="trace-empty">Waiting for page diagnostics…</div>'}</div></div></section>`
 }
 
 function renderSettings() {
