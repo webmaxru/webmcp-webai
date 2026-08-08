@@ -2,7 +2,7 @@
   {
     "name": "get_project_summary",
     "title": "Get project summary",
-    "description": "Read the project health, task counts, and launch context from page-local state.",
+    "description": "Read aggregate project health and task counts from page-local state. Use only for project-level summaries; never use this tool to find, filter, resolve, or select task records. Use search_tasks for any task lookup or task-based mutation.",
     "inputExample": {},
     "inputSchema": {
       "type": "object",
@@ -29,7 +29,7 @@
   {
     "name": "search_tasks",
     "title": "Search tasks",
-    "description": "Search or resolve tasks already loaded in this page by title, owner, priority, or status. Use the returned matches to identify an exact task before changing its status or priority.",
+    "description": "Find and resolve task records already loaded in this page by title, owner, priority, or status. This is the required tool for every task lookup, including selecting tasks for an 'all' request. Use the returned exact task IDs before changing status or priority; do not use get_project_summary for task discovery.",
     "inputExample": {
       "query": "high priority"
     },
@@ -102,7 +102,7 @@
   {
     "name": "set_task_status",
     "title": "Set task status",
-    "description": "Update a task status in the page-local workspace and return the updated task.",
+    "description": "Update the status of one task identified by an exact task ID returned by search_tasks, then return the updated task. This tool does not find tasks.",
     "inputExample": {
       "taskId": "t-1",
       "status": "Done"
@@ -159,7 +159,7 @@
   {
     "name": "set_task_priority",
     "title": "Set task priority",
-    "description": "Update a task priority in the page-local workspace and return the updated task.",
+    "description": "Update the priority of one task identified by an exact task ID returned by search_tasks, then return the updated task. This tool does not find tasks.",
     "inputExample": {
       "taskId": "t-1",
       "priority": "Low"
