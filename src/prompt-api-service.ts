@@ -69,6 +69,23 @@ export function createPromptApiService({ state, registry, buildSystemPrompt, reg
     render()
   }
 
+  function recordPromptFailure(entry: PromptApiRequest, error: unknown) {
+    recordPromptResponse(entry, `Error: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  async function promptAndRecord(session: PromptSession, input: string, options: { responseConstraint?: object }) {
+    const entry = recordPromptRequest('prompt', { input, options })
+    try {
+      const response = await session.prompt(input, options)
+      if (isUnknownPromptApiError(response)) throw new Error(response)
+      recordPromptResponse(entry, response)
+      return response
+    } catch (error) {
+      recordPromptFailure(entry, error)
+      throw error
+    }
+  }
+
   async function detect() {
     const languageModel = (globalThis as typeof globalThis & { LanguageModel?: PromptLanguageModel }).LanguageModel
     if (!languageModel) {
@@ -123,15 +140,17 @@ export function createPromptApiService({ state, registry, buildSystemPrompt, reg
         })
       },
     }
-    recordPromptRequest('create', promptApiSettings().create as Record<string, unknown>)
+    const createRequest = recordPromptRequest('create', promptApiSettings().create as Record<string, unknown>)
     state.promptSessionPromise = languageModel.create(createOptions).then((session) => {
       state.promptSessionRef = session
       state.promptSessionState = 'ready'
       state.promptDownload = 'available'
+      recordPromptResponse(createRequest, 'Prompt session created successfully.')
       debugLog('success', 'Prompt API local model session ready', 'The next prompt will run through the native tool-enabled session.')
       render()
       return session
     }).catch((error) => {
+      recordPromptFailure(createRequest, error)
       state.promptSessionState = 'error'
       state.promptSessionPromise = null
       debugLog('error', 'Prompt API session creation failed', error instanceof Error ? error.message : String(error))
@@ -143,10 +162,7 @@ export function createPromptApiService({ state, registry, buildSystemPrompt, reg
 
   async function runAgenticLoop(session: PromptSession, message: string) {
     const promptOptions = { responseConstraint: assistantResponseConstraint }
-    const initialRequest = recordPromptRequest('prompt', { input: message, options: promptOptions })
-    let response = await session.prompt(message, promptOptions)
-    if (isUnknownPromptApiError(response)) throw new Error(response)
-    recordPromptResponse(initialRequest, response)
+    let response = await promptAndRecord(session, message, promptOptions)
     const registeredNames = new Set(state.webMcpToolCatalog.map((tool) => tool.name))
     const bulkUpdates = new Map<string, Record<string, unknown>>()
     const requestedFields = getRequestedTaskMutationFields(message)
@@ -160,10 +176,7 @@ export function createPromptApiService({ state, registry, buildSystemPrompt, reg
         const requiredTool = `set_task_${requestedMutationField}`
         const followUp = `You have not completed the user's requested ${requestedMutationField} change. Do not provide a final answer yet. You must call ${requiredTool} with the exact taskId and requested ${requestedMutationField}, then use that tool's returned task data.`
         debugLog('error', 'Blocked final response before required mutation', `No successful ${requiredTool} call was recorded.`)
-        const followUpRequest = recordPromptRequest('prompt', { input: followUp, options: promptOptions })
-        response = await session.prompt(followUp, promptOptions)
-        if (isUnknownPromptApiError(response)) throw new Error(response)
-        recordPromptResponse(followUpRequest, response)
+        response = await promptAndRecord(session, followUp, promptOptions)
         continue
       }
       const toolCall = parsed.toolCall
@@ -239,10 +252,7 @@ export function createPromptApiService({ state, registry, buildSystemPrompt, reg
 ${result}
 
 Use this result to answer the user's original request. For an "all" status request, the result includes an update for every matched task; do not repeat those updates. Otherwise, if another registered tool is required, return a tool_call JSON object; if the request is fully resolved, return a final JSON object.`
-      const followUpRequest = recordPromptRequest('prompt', { input: followUp, options: promptOptions })
-      response = await session.prompt(followUp, promptOptions)
-      if (isUnknownPromptApiError(response)) throw new Error(response)
-      recordPromptResponse(followUpRequest, response)
+      response = await promptAndRecord(session, followUp, promptOptions)
     }
 
     throw new Error('The agentic tool loop exceeded its eight-step limit.')
