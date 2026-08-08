@@ -47,9 +47,16 @@ export function searchTasks(query: string, source: Task[] = tasks): Task[] {
   const normalizedQuery = query.trim().toLowerCase()
   if (!normalizedQuery) return source
 
-  return source.filter((task) =>
-    Object.values(task).some((value) => value.toLowerCase().includes(normalizedQuery)),
-  )
+  const priorityMatch = normalizedQuery.match(/\b(high|medium|low)\s+priority\b/)
+  if (priorityMatch) {
+    return source.filter((task) => task.priority.toLowerCase() === priorityMatch[1])
+  }
+
+  const terms = normalizedQuery.split(/\s+/)
+  return source.filter((task) => {
+    const searchableText = Object.values(task).join(' ').toLowerCase()
+    return terms.every((term) => searchableText.includes(term))
+  })
 }
 
 export function updateTaskStatus(taskId: string, status: TaskStatus, source: Task[] = tasks): Task | undefined {

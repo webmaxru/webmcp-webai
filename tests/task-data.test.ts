@@ -15,6 +15,10 @@ describe('task data', () => {
     expect(searchTasks('CUSTOM', customProject.tasks)).toEqual(customTasks)
   })
 
+  it('maps natural-language priority searches to the shared priority field', () => {
+    expect(searchTasks('high priority').map((task) => task.id)).toEqual(['t-1', 't-4'])
+  })
+
   it('updates a task in the selected collection', () => {
     const source = [{ ...tasks[0] }]
 
