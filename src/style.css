@@ -67,3 +67,8 @@ button { cursor: pointer; }
 .architecture-note p { color: #4d6544; }
 .status-chip.muted { color: #4b5b50; background: #eef3ec; }
 .download-progress { background: #dfe7dc; }
+/* Increase loading feedback contrast in the light theme. */
+.chat-loading { height: 3px; background: #d6e2d2; }
+.chat-loading span { width: 42%; background: linear-gradient(90deg, transparent, #78ad3d 28%, #356b12 50%, #78ad3d 72%, transparent); box-shadow: 0 0 10px rgba(83, 145, 40, .65); animation: chat-loading-slide .9s linear infinite; }
+@keyframes chat-loading-slide { 0% { transform: translateX(-120%); } 100% { transform: translateX(240%); } }
+@media (prefers-reduced-motion: reduce) { .chat-loading span { width: 100%; background: #356b12; } }
