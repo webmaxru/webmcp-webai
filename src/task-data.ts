@@ -61,9 +61,12 @@ export function searchTasks(query: string, source: Task[] = tasks): Task[] {
 }
 
 export function updateTaskStatus(taskId: string, status: TaskStatus, source: Task[] = tasks): Task | undefined {
-  const task = source.find((candidate) => candidate.id === taskId)
-  if (!task) return undefined
+  const taskIndex = source.findIndex((candidate) => candidate.id === taskId)
+  if (taskIndex < 0) return undefined
 
+  const task = source[taskIndex]
   task.status = status
+  source.splice(taskIndex, 1)
+  source.unshift(task)
   return task
 }

@@ -1,7 +1,7 @@
 import appData from './data/app.json'
 import workspaceData from './data/workspace.json'
 import userData from './data/user.json'
-import { type Project, type Task, type TaskStatus, searchTasks as filterTasks } from './task-data'
+import { type Project, type Task, type TaskStatus, searchTasks as filterTasks, updateTaskStatus } from './task-data'
 
 export interface CurrentUser {
   name: string
@@ -36,8 +36,5 @@ export function searchProjectTasks(query: string): Task[] {
 }
 
 export function setProjectTaskStatus(taskId: string, status: TaskStatus): Task | undefined {
-  const task = projectState.tasks.find((candidate) => candidate.id === taskId)
-  if (!task) return undefined
-  task.status = status
-  return task
+  return updateTaskStatus(taskId, status, projectState.tasks)
 }

@@ -64,6 +64,7 @@ export type ChatMessage = { role: 'user' | 'assistant' | 'status'; text: string 
 export interface AppState {
   scene: Scene
   filter: string
+  recentlyUpdatedTaskId?: string
   toolCalls: ToolCall[]
   callId: number
   chat: ChatMessage[]

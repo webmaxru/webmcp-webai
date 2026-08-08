@@ -42,7 +42,11 @@ const tools: LocalTool[] = [
       if (!normalizedStatus) return JSON.stringify({ error: `Invalid status. Use one of: ${TASK_STATUSES.join(', ')}` })
       const task = setProjectTaskStatus(taskId, normalizedStatus)
       if (!task) return JSON.stringify({ error: 'Task not found' })
+      state.recentlyUpdatedTaskId = task.id
       render()
+      window.setTimeout(() => {
+        if (state.recentlyUpdatedTaskId === task.id) state.recentlyUpdatedTaskId = undefined
+      }, 700)
       return JSON.stringify(task)
     },
   },

@@ -24,10 +24,18 @@ describe('task data', () => {
   })
 
   it('updates a task in the selected collection', () => {
-    const source = [{ ...tasks[0] }]
+    const source = [{ ...tasks[0] }, { ...tasks[1] }]
 
     expect(updateTaskStatus(source[0].id, 'Done', source)).toBe(source[0])
     expect(source[0].status).toBe('Done')
+  })
+
+  it('moves an updated task to the top of its collection', () => {
+    const source = [{ ...tasks[0] }, { ...tasks[1] }]
+
+    updateTaskStatus(source[1].id, 'In progress', source)
+
+    expect(source.map((task) => task.id)).toEqual(['t-2', 't-1'])
   })
 
   it('normalizes natural-language status casing and separators', () => {
