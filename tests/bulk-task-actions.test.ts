@@ -8,6 +8,12 @@ describe('bulk task actions', () => {
     expect([...getRequestedTaskMutationFields('Set customer demo status to done and priority to low')]).toEqual(['status', 'priority'])
   })
 
+  it('does not infer mutation intent from read-only task searches', () => {
+    expect([...getRequestedTaskMutationFields('Find high priority tasks')]).toEqual([])
+    expect([...getRequestedTaskMutationFields('Show tasks with status Todo')]).toEqual([])
+    expect([...getRequestedTaskMutationFields('List low priority tasks')]).toEqual([])
+  })
+
   it('only recognizes an executed mutation result, not a search result or error', () => {
     expect(hasSuccessfulTaskMutation(JSON.stringify({ matches: [{ id: 't-5', priority: 'Medium' }] }), 'priority')).toBe(false)
     expect(hasSuccessfulTaskMutation(JSON.stringify({ error: 'Task not found' }), 'priority')).toBe(false)

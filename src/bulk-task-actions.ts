@@ -4,6 +4,10 @@ export type TaskMutationField = 'status' | 'priority'
 
 export function getRequestedTaskMutationFields(message: string): Set<TaskMutationField> {
   const fields = new Set<TaskMutationField>()
+  // A field mention in a read-only search (for example, "find high priority tasks")
+  // is not permission to mutate that field.
+  const mutationIntent = /\b(?:set|change|update|modify|edit|mark|make|move|switch|assign)\b/i.test(message)
+  if (!mutationIntent) return fields
   if (/\bstatus(?:es)?\b/i.test(message)) fields.add('status')
   if (/\bpriorit(?:y|ies)\b/i.test(message)) fields.add('priority')
   return fields

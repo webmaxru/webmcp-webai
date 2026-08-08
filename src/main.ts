@@ -315,7 +315,13 @@ async function runAgenticLoop(session: PromptSession, message: string) {
     debugLog('info', `Parsed constrained tool call ${toolCall.name}`, JSON.stringify(toolCall.input))
     const calledMutationField = toolCall.name === 'set_task_status' ? 'status' : toolCall.name === 'set_task_priority' ? 'priority' : undefined
     let result: string
-    if (requestedMutationField && calledMutationField && requestedMutationField !== calledMutationField) {
+    if (!requestedMutationField && calledMutationField) {
+      result = JSON.stringify({
+        error: 'This is a read-only request. Do not call a mutation tool; use the read-only lookup result to answer the user.',
+        retry: 'Call search_tasks if task lookup is needed, then return a final response without changing any task.',
+      })
+      debugLog('error', 'Blocked mutation during read-only request', `Requested ${toolCall.name} without explicit mutation intent.`)
+    } else if (requestedMutationField && calledMutationField && requestedMutationField !== calledMutationField) {
       result = JSON.stringify({
         error: `This request changes only ${requestedMutationField}. Do not call set_task_${calledMutationField}; call set_task_${requestedMutationField} instead.`,
         retry: `Use set_task_${requestedMutationField} with the exact taskId and requested ${requestedMutationField}.`,
