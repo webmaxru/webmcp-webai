@@ -4,7 +4,7 @@ import conversationStarters from './conversation-starters.json'
 import { mergeDownloadProgress } from './prompt-download'
 import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskStatus } from './mock-api'
 import { normalizeTaskStatus, TASK_STATUSES, type Task } from './task-data'
-import { assistantResponseConstraint, parseAssistantResponse, validateToolInput } from './tool-protocol'
+import { assistantResponseConstraint, normalizeToolInput, parseAssistantResponse, validateToolInput } from './tool-protocol'
 
 const appData = getAppData()
 const currentUser = getCurrentUser()
@@ -336,7 +336,8 @@ async function ensurePromptSession() {
 function invokeTool(name: string, input: Record<string, string> = {}, source = 'Page tool') {
   const tool = tools.find((candidate) => candidate.name === name)
   if (!tool) return 'Tool not found'
-  const validationError = validateToolInput(name, input)
+  const normalizedInput = normalizeToolInput(name, input)
+  const validationError = validateToolInput(name, normalizedInput)
   if (validationError) {
     debugLog('error', `Rejected invalid ${name} arguments`, validationError)
     return JSON.stringify({ error: validationError, retry: 'Follow the required tool chain and call search_tasks before set_task_status.' })
@@ -348,10 +349,10 @@ function invokeTool(name: string, input: Record<string, string> = {}, source = '
     render()
   }
   const startedAt = Date.now()
-  const call: ToolCall = { id: ++state.callId, name, description: tool.description, source, input: JSON.stringify(input), output: 'Running…', status: 'running', startedAt }
+  const call: ToolCall = { id: ++state.callId, name, description: tool.description, source, input: JSON.stringify(normalizedInput), output: 'Running…', status: 'running', startedAt }
   state.toolCalls.unshift(call)
   render()
-  const output = tool.run(input)
+  const output = tool.run(normalizedInput)
   call.output = output
   call.status = 'complete'
   call.completedAt = Date.now()

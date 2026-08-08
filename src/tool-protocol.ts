@@ -74,6 +74,18 @@ const toolArgumentKeys: Record<ToolName, readonly string[]> = {
   set_task_status: ['taskId', 'status'],
 }
 
+export function normalizeToolInput(name: string, input: Record<string, string>): Record<string, string>
+export function normalizeToolInput(name: string, input: unknown): unknown
+export function normalizeToolInput(name: string, input: unknown): unknown {
+  if (name !== 'set_task_status' || !input || typeof input !== 'object' || Array.isArray(input)) return input
+
+  const value = input as Record<string, unknown>
+  if (!Object.hasOwn(value, 'task_id') || Object.hasOwn(value, 'taskId')) return input
+
+  const { task_id, ...rest } = value
+  return { ...rest, taskId: task_id }
+}
+
 export function validateToolInput(name: string, input: unknown): string | undefined {
   if (!isToolName(name)) return `Unknown tool "${name}".`
   if (!input || typeof input !== 'object' || Array.isArray(input)) return `Tool "${name}" requires an object of arguments.`
@@ -103,10 +115,11 @@ export function parseAssistantResponse(response: string): ParsedAssistantRespons
   if (value.kind !== 'tool_call' || typeof value.tool !== 'string' || !isToolName(value.tool)) {
     throw new Error('The local model returned an unknown or invalid tool call.')
   }
-  if (validateToolInput(value.tool, value.arguments) !== undefined) {
+  const normalizedArguments = normalizeToolInput(value.tool, value.arguments)
+  if (validateToolInput(value.tool, normalizedArguments) !== undefined) {
     throw new Error(`The local model returned invalid arguments for "${value.tool}". Tool names must only appear in the tool field, never as argument values.`)
   }
-  return { kind: 'tool_call', toolCall: { name: value.tool, input: value.arguments as Record<string, string> } }
+  return { kind: 'tool_call', toolCall: { name: value.tool, input: normalizedArguments as Record<string, string> } }
 }
 
 function isToolName(value: string): value is ToolName {
