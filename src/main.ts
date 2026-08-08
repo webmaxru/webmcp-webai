@@ -4,6 +4,7 @@ import conversationStarters from './conversation-starters.json'
 import { mergeDownloadProgress } from './prompt-download'
 import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskStatus } from './mock-api'
 import { normalizeTaskStatus, TASK_STATUSES, type Task } from './task-data'
+import { applyBulkTaskStatus, getBulkTaskStatus, parseSearchMatches } from './bulk-task-actions'
 import { assistantResponseConstraint, normalizeToolInput, parseAssistantResponse, validateToolInput } from './tool-protocol'
 
 const appData = getAppData()
@@ -378,12 +379,23 @@ async function runAgenticLoop(session: PromptSession, message: string) {
     }
 
     debugLog('info', `Parsed constrained tool call ${toolCall.name}`, JSON.stringify(toolCall.input))
-    const result = invokeTool(toolCall.name, toolCall.input, 'Prompt API agentic loop')
+    let result = invokeTool(toolCall.name, toolCall.input, 'Prompt API agentic loop')
+    const bulkStatus = getBulkTaskStatus(message)
+    if (toolCall.name === 'search_tasks' && bulkStatus) {
+      const matches = parseSearchMatches(result)
+      const updates = applyBulkTaskStatus(matches, bulkStatus, (taskId, status) => JSON.parse(invokeTool(
+        'set_task_status',
+        { taskId, status },
+        'Prompt API bulk task update',
+      )))
+      result = JSON.stringify({ matches, updates })
+      debugLog('success', 'Completed bulk task status update', `${updates.length} matching task(s) updated to ${bulkStatus}.`)
+    }
     debugLog('success', `Tool result returned to model`, `${toolCall.name}: ${result}`)
     const followUp = `The page tool "${toolCall.name}" returned this result:
 ${result}
 
-Use this result to answer the user's original request. If the original request applies to multiple search matches, continue with one set_task_status tool_call for every remaining relevant match before returning a final JSON object. Otherwise, if another registered tool is required, return a tool_call JSON object; if the request is fully resolved, return a final JSON object.`
+Use this result to answer the user's original request. For an "all" status request, the result includes an update for every matched task; do not repeat those updates. Otherwise, if another registered tool is required, return a tool_call JSON object; if the request is fully resolved, return a final JSON object.`
     recordPromptRequest('prompt', { input: followUp, options: promptOptions })
     response = await session.prompt(followUp, promptOptions)
   }
