@@ -1,7 +1,7 @@
 import './style.css'
 import assistantSystemPromptTemplate from './assistant-system-prompt.md?raw'
 import conversationStarters from './conversation-starters.json'
-import toolDescriptions from './data/tool-descriptions.json'
+import toolDetails from './data/tools.json'
 import { mergeDownloadProgress } from './prompt-download'
 import { isUnknownPromptApiError, PROMPT_API_RETRY_LIMIT } from './prompt-retry'
 import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskStatus } from './mock-api'
@@ -30,11 +30,13 @@ interface ToolCall {
 }
 
 interface LocalTool {
-  name: string
-  description: string
-  input: string
+  details: ToolDetails
   run: (input: Record<string, string>) => string
 }
+
+type ToolDetails = (typeof toolDetails)[number]
+
+const toolDetailsByName = Object.fromEntries(toolDetails.map((tool) => [tool.name, tool])) as Record<string, ToolDetails>
 
 interface WebMcpContext {
   registerTool: (tool: {
@@ -109,27 +111,19 @@ function debugLog(level: DebugLevel, message: string, detail?: string) {
 
 const tools: LocalTool[] = [
   {
-    name: 'get_project_summary',
-    description: toolDescriptions.get_project_summary,
-    input: '{}',
+    details: toolDetails[0],
     run: () => JSON.stringify({ project: project.name, health: project.health, tasks: project.tasks.length, inProgress: project.tasks.filter((task) => task.status === 'In progress').length }),
   },
   {
-    name: 'search_tasks',
-    description: toolDescriptions.search_tasks,
-    input: '{ "query": "string" }',
+    details: toolDetails[1],
     run: ({ query = '' }) => JSON.stringify({ matches: searchProjectTasks(query) }),
   },
   {
-    name: 'get_current_user',
-    description: toolDescriptions.get_current_user,
-    input: '{}',
+    details: toolDetails[2],
     run: () => JSON.stringify({ ...currentUser, source: 'local session' }),
   },
   {
-    name: 'set_task_status',
-    description: toolDescriptions.set_task_status,
-    input: '{ "taskId": "t-1", "status": "Done" }',
+    details: toolDetails[3],
     run: ({ taskId = '', status = 'Todo' }) => {
       const normalizedStatus = normalizeTaskStatus(status)
       if (!normalizedStatus) return JSON.stringify({ error: `Invalid status. Use one of: ${TASK_STATUSES.join(', ')}` })
@@ -141,32 +135,13 @@ const tools: LocalTool[] = [
   },
 ]
 
-const toolSchemas: Record<string, Record<string, unknown>> = {
-  get_project_summary: { type: 'object', properties: {}, additionalProperties: false },
-  search_tasks: { type: 'object', properties: { query: { type: 'string', description: 'The original task description or search text from the user' } }, required: ['query'], additionalProperties: false },
-  get_current_user: { type: 'object', properties: {}, additionalProperties: false },
-  set_task_status: {
-    type: 'object',
-    properties: { taskId: { type: 'string' }, status: { type: 'string', enum: [...TASK_STATUSES], description: 'Status is case-insensitive; use "In progress" for active work.' } },
-    required: ['taskId', 'status'],
-    additionalProperties: false,
-  },
-}
-
-const toolStatusMessages: Record<string, { running: string; complete: string }> = {
-  get_project_summary: { running: 'Checking the project health…', complete: 'The latest project health is ready.' },
-  search_tasks: { running: 'Searching the workspace tasks…', complete: 'The task results are ready.' },
-  get_current_user: { running: 'Checking your workspace access…', complete: 'Your workspace access is ready.' },
-  set_task_status: { running: 'Updating the task status…', complete: 'The task status has been updated.' },
-}
-
 const promptTools = tools.map((tool) => ({
-  name: tool.name,
-  description: tool.description,
-  inputSchema: toolSchemas[tool.name],
+  name: tool.details.name,
+  description: tool.details.description,
+  inputSchema: tool.details.inputSchema,
   execute: async (input: Record<string, string>) => {
-    debugLog('info', `Prompt API requested ${tool.name}`, JSON.stringify(input))
-    return invokeTool(tool.name, input, 'Prompt API tool execution')
+    debugLog('info', `Prompt API requested ${tool.details.name}`, JSON.stringify(input))
+    return invokeTool(tool.details.name, input, 'Prompt API tool execution')
   },
 }))
 
@@ -194,23 +169,23 @@ function registerWebMcpTools() {
     const controller = new AbortController()
     const registered = await Promise.all(tools.map(async (tool) => {
       try {
-        debugLog('pending', `Registering ${tool.name}`)
+        debugLog('pending', `Registering ${tool.details.name}`)
         await modelContext.registerTool({
-          name: tool.name,
-          title: tool.name.replaceAll('_', ' '),
-          description: tool.description,
-          inputSchema: toolSchemas[tool.name],
-          annotations: { readOnlyHint: tool.name !== 'set_task_status' },
-          execute: async (input) => JSON.parse(invokeTool(tool.name, input, 'WebMCP browser execution')),
+          name: tool.details.name,
+          title: tool.details.title,
+          description: tool.details.description,
+          inputSchema: tool.details.inputSchema,
+          annotations: tool.details.annotations,
+          execute: async (input) => JSON.parse(invokeTool(tool.details.name, input, 'WebMCP browser execution')),
         }, { signal: controller.signal })
-        state.webMcpRegisteredTools.push(tool.name)
-        debugLog('success', `Registered ${tool.name}`, 'Visible to the browser model context.')
+        state.webMcpRegisteredTools.push(tool.details.name)
+        debugLog('success', `Registered ${tool.details.name}`, 'Visible to the browser model context.')
         return true
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        state.webMcpErrors.push(`${tool.name}: ${message}`)
-        debugLog('error', `Failed to register ${tool.name}`, message)
-        console.error(`Failed to register WebMCP tool "${tool.name}"`, error)
+        state.webMcpErrors.push(`${tool.details.name}: ${message}`)
+        debugLog('error', `Failed to register ${tool.details.name}`, message)
+        console.error(`Failed to register WebMCP tool "${tool.details.name}"`, error)
         return false
       }
     }))
@@ -219,7 +194,7 @@ function registerWebMcpTools() {
       state.webMcpRegistration = state.webMcpErrors.length ? 'error' : 'complete'
       state.webMcpToolCatalog = modelContext.getTools
         ? (await modelContext.getTools()).filter((tool) => state.webMcpRegisteredTools.includes(tool.name))
-        : tools.filter((tool) => state.webMcpRegisteredTools.includes(tool.name)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: toolSchemas[tool.name] }))
+        : tools.filter((tool) => state.webMcpRegisteredTools.includes(tool.details.name)).map((tool) => ({ name: tool.details.name, description: tool.details.description, inputSchema: tool.details.inputSchema }))
       debugLog('success', 'WebMCP tool catalog loaded', `${state.webMcpToolCatalog.length} tools available to the Prompt API session.`)
       debugLog(state.webMcpErrors.length ? 'error' : 'success', 'WebMCP registration finished', `${state.webMcpRegisteredTools.length}/${tools.length} tools registered.`)
       void detectPromptApi()
@@ -345,22 +320,22 @@ async function ensurePromptSession() {
 }
 
 function invokeTool(name: string, input: Record<string, string> = {}, source = 'Page tool') {
-  const tool = tools.find((candidate) => candidate.name === name)
-  if (!tool) return 'Tool not found'
+  const tool = tools.find((candidate) => candidate.details.name === name)
+  if (!tool) return JSON.stringify({ error: `Unknown tool: ${name}` })
   const normalizedInput = normalizeToolInput(name, input)
   const validationError = validateToolInput(name, normalizedInput)
   if (validationError) {
     debugLog('error', `Rejected invalid ${name} arguments`, validationError)
     return JSON.stringify({ error: validationError, retry: 'Follow the required tool chain and call search_tasks before set_task_status.' })
   }
-  const statusMessages = toolStatusMessages[name]
+  const statusMessages = tool.details.statusMessages
   const statusMessage: ChatMessage | undefined = statusMessages ? { role: 'status', text: statusMessages.running } : undefined
   if (statusMessage) {
     state.chat.push(statusMessage)
     render()
   }
   const startedAt = Date.now()
-  const call: ToolCall = { id: ++state.callId, name, description: tool.description, source, input: JSON.stringify(normalizedInput), output: 'Running…', status: 'running', startedAt }
+  const call: ToolCall = { id: ++state.callId, name, description: tool.details.description, source, input: JSON.stringify(normalizedInput), output: 'Running…', status: 'running', startedAt }
   state.toolCalls.unshift(call)
   render()
   const output = tool.run(normalizedInput)
@@ -493,7 +468,7 @@ function renderOverview(tasks: Task[]) {
 }
 
 function renderActivity() {
-  const calls = state.toolCalls.map((call) => `<details class="activity-item tool-call-detail"><summary><span class="activity-icon">✦</span><span><strong>${escapeHtml(call.name)}</strong><p>${escapeHtml(call.description)}</p></span><time>${new Date(call.startedAt).toLocaleTimeString()}</time></summary><div class="tool-call-grid"><div><span class="eyebrow">CALL METADATA</span><p><b>Call ID</b> #${String(call.id).padStart(2, '0')} · <b>Source</b> ${escapeHtml(call.source)} · <b>Status</b> ${call.status}</p><p><b>Started</b> ${new Date(call.startedAt).toLocaleString()}${call.completedAt ? ` · <b>Completed</b> ${new Date(call.completedAt).toLocaleString()}` : ''}${call.durationMs !== undefined ? ` · <b>Duration</b> ${call.durationMs} ms` : ''}</p></div><div><span class="eyebrow">INPUT</span><pre>${escapeHtml(call.input)}</pre></div><div><span class="eyebrow">INPUT SCHEMA</span><pre>${escapeHtml(JSON.stringify(toolSchemas[call.name] ?? {}, null, 2))}</pre></div><div><span class="eyebrow">OUTPUT</span><pre>${escapeHtml(call.output)}</pre><small>${call.output.length} characters returned</small></div></div></details>`).join('')
+  const calls = state.toolCalls.map((call) => `<details class="activity-item tool-call-detail"><summary><span class="activity-icon">✦</span><span><strong>${escapeHtml(call.name)}</strong><p>${escapeHtml(call.description)}</p></span><time>${new Date(call.startedAt).toLocaleTimeString()}</time></summary><div class="tool-call-grid"><div><span class="eyebrow">CALL METADATA</span><p><b>Call ID</b> #${String(call.id).padStart(2, '0')} · <b>Source</b> ${escapeHtml(call.source)} · <b>Status</b> ${call.status}</p><p><b>Started</b> ${new Date(call.startedAt).toLocaleString()}${call.completedAt ? ` · <b>Completed</b> ${new Date(call.completedAt).toLocaleString()}` : ''}${call.durationMs !== undefined ? ` · <b>Duration</b> ${call.durationMs} ms` : ''}</p></div><div><span class="eyebrow">INPUT</span><pre>${escapeHtml(call.input)}</pre></div><div><span class="eyebrow">INPUT SCHEMA</span><pre>${escapeHtml(JSON.stringify(toolDetailsByName[call.name]?.inputSchema ?? {}, null, 2))}</pre></div><div><span class="eyebrow">OUTPUT</span><pre>${escapeHtml(call.output)}</pre><small>${call.output.length} characters returned</small></div></div></details>`).join('')
   return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">WORKSPACE / AUDIT LOG</span><h1>Tool activity</h1><p>Every page-local tool call is recorded with its source, timing, input, and returned output.</p></div></div><div class="activity-list">${calls || '<div class="blank-state"><span>↗</span><h2>No tool activity yet</h2><p>Ask the local assistant a question to see the page respond.</p></div>'}</div></section>`
 }
 

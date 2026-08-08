@@ -1,0 +1,159 @@
+[
+  {
+    "name": "get_project_summary",
+    "title": "Get project summary",
+    "description": "Read the project health, task counts, and launch context from page-local state.",
+    "inputExample": {},
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "output": {
+      "description": "The current project name, health, total task count, and number of in-progress tasks.",
+      "example": {
+        "project": "Atlas launch",
+        "health": "On track",
+        "tasks": 6,
+        "inProgress": 2
+      }
+    },
+    "statusMessages": {
+      "running": "Checking the project health…",
+      "complete": "The latest project health is ready."
+    }
+  },
+  {
+    "name": "search_tasks",
+    "title": "Search tasks",
+    "description": "Search or resolve tasks already loaded in this page by title, owner, priority, or status. Use the returned matches to identify an exact task before changing its status.",
+    "inputExample": {
+      "query": "high priority"
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The original task description or search text from the user"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "output": {
+      "description": "An array of matching task records with their IDs, titles, owners, statuses, priorities, and due dates.",
+      "example": {
+        "matches": [
+          {
+            "id": "t-1",
+            "title": "Prepare launch checklist",
+            "owner": "Maya",
+            "status": "In progress",
+            "priority": "High",
+            "due": "2026-08-12"
+          }
+        ]
+      }
+    },
+    "statusMessages": {
+      "running": "Searching the workspace tasks…",
+      "complete": "The task results are ready."
+    }
+  },
+  {
+    "name": "get_current_user",
+    "title": "Get current user",
+    "description": "Read the signed-in user and permissions from the local session state.",
+    "inputExample": {},
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "output": {
+      "description": "The signed-in user's profile, role, permissions, and local session source.",
+      "example": {
+        "name": "Maya",
+        "role": "Product lead",
+        "permissions": [
+          "tasks:read",
+          "tasks:write"
+        ],
+        "source": "local session"
+      }
+    },
+    "statusMessages": {
+      "running": "Checking your workspace access…",
+      "complete": "Your workspace access is ready."
+    }
+  },
+  {
+    "name": "set_task_status",
+    "title": "Set task status",
+    "description": "Update a task status in the page-local workspace and return the updated task.",
+    "inputExample": {
+      "taskId": "t-1",
+      "status": "Done"
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "Todo",
+            "In progress",
+            "Done"
+          ],
+          "description": "Status is case-insensitive; use \"In progress\" for active work."
+        }
+      },
+      "required": [
+        "taskId",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "output": {
+      "description": "The updated task record, or an error object when the status or task ID is invalid.",
+      "example": {
+        "id": "t-1",
+        "title": "Prepare launch checklist",
+        "owner": "Maya",
+        "status": "Done",
+        "priority": "High",
+        "due": "2026-08-12"
+      },
+      "errorExamples": [
+        {
+          "error": "Invalid status. Use one of: Todo, In progress, Done"
+        },
+        {
+          "error": "Task not found"
+        }
+      ]
+    },
+    "statusMessages": {
+      "running": "Updating the task status…",
+      "complete": "The task status has been updated."
+    }
+  }
+]
