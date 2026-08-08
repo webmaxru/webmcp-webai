@@ -1,7 +1,7 @@
 import './style.css'
 import conversationStarters from './conversation-starters.json'
 import { mergeDownloadProgress } from './prompt-download'
-import { project, searchTasks, TASK_STATUSES, updateTaskStatus, type Task, type TaskStatus } from './task-data'
+import { normalizeTaskStatus, project, searchTasks, TASK_STATUSES, updateTaskStatus, type Task } from './task-data'
 
 type Scene = 'overview' | 'activity' | 'settings' | 'debug'
 type DebugLevel = 'info' | 'success' | 'error' | 'pending'
@@ -111,8 +111,9 @@ const tools: LocalTool[] = [
     description: 'Update a task status in the page-local workspace and return the updated task.',
     input: '{ "taskId": "t-1", "status": "Done" }',
     run: ({ taskId = '', status = 'Todo' }) => {
-      if (!TASK_STATUSES.includes(status as TaskStatus)) return JSON.stringify({ error: `Invalid status. Use one of: ${TASK_STATUSES.join(', ')}` })
-      const task = updateTaskStatus(taskId, status as TaskStatus, project.tasks)
+      const normalizedStatus = normalizeTaskStatus(status)
+      if (!normalizedStatus) return JSON.stringify({ error: `Invalid status. Use one of: ${TASK_STATUSES.join(', ')}` })
+      const task = updateTaskStatus(taskId, normalizedStatus, project.tasks)
       if (!task) return JSON.stringify({ error: 'Task not found' })
       render()
       return JSON.stringify(task)
@@ -126,7 +127,7 @@ const toolSchemas: Record<string, Record<string, unknown>> = {
   get_current_user: { type: 'object', properties: {} },
   set_task_status: {
     type: 'object',
-    properties: { taskId: { type: 'string' }, status: { type: 'string', enum: ['Todo', 'In progress', 'Done'] } },
+    properties: { taskId: { type: 'string' }, status: { type: 'string', enum: [...TASK_STATUSES], description: 'Status is case-insensitive; use "In progress" for active work.' } },
     required: ['taskId', 'status'],
   },
 }

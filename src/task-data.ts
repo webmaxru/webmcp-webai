@@ -1,6 +1,11 @@
 export const TASK_STATUSES = ['Todo', 'In progress', 'Done'] as const
 export type TaskStatus = typeof TASK_STATUSES[number]
 
+export function normalizeTaskStatus(value: string): TaskStatus | undefined {
+  const normalizedValue = value.trim().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').toLowerCase()
+  return TASK_STATUSES.find((status) => status.toLowerCase() === normalizedValue)
+}
+
 export const TASK_PRIORITIES = ['High', 'Medium', 'Low'] as const
 export type TaskPriority = typeof TASK_PRIORITIES[number]
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createProject, project, searchTasks, tasks, updateTaskStatus } from '../src/task-data'
+import { createProject, normalizeTaskStatus, project, searchTasks, tasks, updateTaskStatus } from '../src/task-data'
 
 describe('task data', () => {
   it('keeps the project and shared task collection in sync', () => {
@@ -28,5 +28,11 @@ describe('task data', () => {
 
     expect(updateTaskStatus(source[0].id, 'Done', source)).toBe(source[0])
     expect(source[0].status).toBe('Done')
+  })
+
+  it('normalizes natural-language status casing and separators', () => {
+    expect(normalizeTaskStatus('in progress')).toBe('In progress')
+    expect(normalizeTaskStatus('IN_PROGRESS')).toBe('In progress')
+    expect(normalizeTaskStatus('blocked')).toBeUndefined()
   })
 })
