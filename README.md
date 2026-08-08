@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Open the local Vite URL. The chat uses the native `LanguageModel` Prompt API only; it does not synthesize answers when the API is unavailable. On the first prompt, or via **Settings → Prepare local model**, the app calls `LanguageModel.create()` with the page tools and a download monitor. In a browser that exposes `document.modelContext.registerTool`, the page registers all four tools at startup.
+Open the local Vite URL. The chat uses the native `LanguageModel` Prompt API only; it does not synthesize answers when the API is unavailable. On the first prompt, or via **Settings → Prepare local model**, the app calls `LanguageModel.create()` with the page tools and a download monitor. In a browser that exposes `document.modelContext.registerTool`, the page registers all five tools at startup.
 
 For Chrome preview testing, use a supported Chrome build, enable the Prompt API/on-device model flags and `chrome://flags/#enable-webmcp-testing`, then reload the HTTPS site. The **Settings** page shows the exact availability, download, session, and registration states; **Trace** contains the runtime event log. See `chrome://on-device-internals` for browser-level model download diagnostics.
 

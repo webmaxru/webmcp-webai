@@ -3,5 +3,6 @@
   { "label": "High priority tasks", "prompt": "Find high priority tasks" },
   { "label": "Complete high priority tasks", "prompt": "Set all high priority tasks status to done" },
   { "label": "Signed-in user", "prompt": "Who am I signed in as?" },
-  { "label": "Update accessibility status", "prompt": "Set status of accessibility task to in progress" }
+  { "label": "Update accessibility status", "prompt": "Set status of accessibility task to in progress" },
+  { "label": "Customer demo priority", "prompt": "set customer demo priority to low" }
 ]

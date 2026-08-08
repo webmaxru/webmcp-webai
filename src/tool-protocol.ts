@@ -1,4 +1,4 @@
-export type ToolName = 'get_project_summary' | 'search_tasks' | 'get_current_user' | 'set_task_status'
+export type ToolName = 'get_project_summary' | 'search_tasks' | 'get_current_user' | 'set_task_status' | 'set_task_priority'
 
 export type ParsedAssistantResponse =
   | { kind: 'final'; answer: string }
@@ -64,6 +64,23 @@ export const assistantResponseConstraint = {
       required: ['kind', 'tool', 'arguments'],
       additionalProperties: false,
     },
+    {
+      properties: {
+        kind: { const: 'tool_call' },
+        tool: { const: 'set_task_priority' },
+        arguments: {
+          type: 'object',
+          properties: {
+            taskId: { type: 'string' },
+            priority: { type: 'string' },
+          },
+          required: ['taskId', 'priority'],
+          additionalProperties: false,
+        },
+      },
+      required: ['kind', 'tool', 'arguments'],
+      additionalProperties: false,
+    },
   ],
 } as const
 
@@ -72,12 +89,13 @@ const toolArgumentKeys: Record<ToolName, readonly string[]> = {
   search_tasks: ['query'],
   get_current_user: [],
   set_task_status: ['taskId', 'status'],
+  set_task_priority: ['taskId', 'priority'],
 }
 
 export function normalizeToolInput(name: string, input: Record<string, string>): Record<string, string>
 export function normalizeToolInput(name: string, input: unknown): unknown
 export function normalizeToolInput(name: string, input: unknown): unknown {
-  if (name !== 'set_task_status' || !input || typeof input !== 'object' || Array.isArray(input)) return input
+  if (!['set_task_status', 'set_task_priority'].includes(name) || !input || typeof input !== 'object' || Array.isArray(input)) return input
 
   const value = input as Record<string, unknown>
   if (!Object.hasOwn(value, 'task_id') || Object.hasOwn(value, 'taskId')) return input
@@ -123,5 +141,5 @@ export function parseAssistantResponse(response: string): ParsedAssistantRespons
 }
 
 function isToolName(value: string): value is ToolName {
-  return value === 'get_project_summary' || value === 'search_tasks' || value === 'get_current_user' || value === 'set_task_status'
+  return value === 'get_project_summary' || value === 'search_tasks' || value === 'get_current_user' || value === 'set_task_status' || value === 'set_task_priority'
 }

@@ -1,7 +1,7 @@
 import appData from './data/app.json'
 import workspaceData from './data/workspace.json'
 import userData from './data/user.json'
-import { type Project, type Task, type TaskStatus, searchTasks as filterTasks, updateTaskStatus } from './task-data'
+import { type Project, type Task, type TaskPriority, type TaskStatus, searchTasks as filterTasks, updateTaskPriority, updateTaskStatus } from './task-data'
 
 export interface CurrentUser {
   name: string
@@ -37,4 +37,8 @@ export function searchProjectTasks(query: string): Task[] {
 
 export function setProjectTaskStatus(taskId: string, status: TaskStatus): Task | undefined {
   return updateTaskStatus(taskId, status, projectState.tasks)
+}
+
+export function setProjectTaskPriority(taskId: string, priority: TaskPriority): Task | undefined {
+  return updateTaskPriority(taskId, priority, projectState.tasks)
 }

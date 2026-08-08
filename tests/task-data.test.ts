@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createProject, normalizeTaskStatus, project, searchTasks, tasks, updateTaskStatus } from '../src/task-data'
+import { createProject, normalizeTaskPriority, normalizeTaskStatus, project, searchTasks, tasks, updateTaskPriority, updateTaskStatus } from '../src/task-data'
 
 describe('task data', () => {
   it('keeps the project and shared task collection in sync', () => {
@@ -42,5 +42,14 @@ describe('task data', () => {
     expect(normalizeTaskStatus('in progress')).toBe('In progress')
     expect(normalizeTaskStatus('IN_PROGRESS')).toBe('In progress')
     expect(normalizeTaskStatus('blocked')).toBeUndefined()
+  })
+
+  it('normalizes and updates task priorities', () => {
+    const source = [{ ...tasks[0] }]
+
+    expect(normalizeTaskPriority('low')).toBe('Low')
+    expect(updateTaskPriority(source[0].id, 'Low', source)).toBe(source[0])
+    expect(source[0].priority).toBe('Low')
+    expect(normalizeTaskPriority('urgent')).toBeUndefined()
   })
 })

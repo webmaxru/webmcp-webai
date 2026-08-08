@@ -60,6 +60,63 @@
             "status": "In progress",
             "priority": "High",
             "due": "2026-08-12"
+          },
+          {
+            "name": "set_task_priority",
+            "title": "Set task priority",
+            "description": "Update a task priority in the page-local workspace and return the updated task.",
+            "inputExample": {
+              "taskId": "t-1",
+              "priority": "Low"
+            },
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "priority": {
+                  "type": "string",
+                  "enum": [
+                    "High",
+                    "Medium",
+                    "Low"
+                  ],
+                  "description": "Priority is case-insensitive; use High, Medium, or Low."
+                }
+              },
+              "required": [
+                "taskId",
+                "priority"
+              ],
+              "additionalProperties": false
+            },
+            "annotations": {
+              "readOnlyHint": false
+            },
+            "output": {
+              "description": "The updated task record, or an error object when the priority or task ID is invalid.",
+              "example": {
+                "id": "t-1",
+                "title": "Prepare launch checklist",
+                "owner": "Maya",
+                "status": "In progress",
+                "priority": "Low",
+                "due": "2026-08-12"
+              },
+              "errorExamples": [
+                {
+                  "error": "Invalid priority. Use one of: High, Medium, Low"
+                },
+                {
+                  "error": "Task not found"
+                }
+              ]
+            },
+            "statusMessages": {
+              "running": "Updating the task priority…",
+              "complete": "The task priority has been updated."
+            }
           }
         ]
       }

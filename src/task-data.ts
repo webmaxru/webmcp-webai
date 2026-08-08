@@ -11,6 +11,11 @@ export function normalizeTaskStatus(value: string): TaskStatus | undefined {
 export const TASK_PRIORITIES = ['High', 'Medium', 'Low'] as const
 export type TaskPriority = typeof TASK_PRIORITIES[number]
 
+export function normalizeTaskPriority(value: string): TaskPriority | undefined {
+  const normalizedValue = value.trim().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').toLowerCase()
+  return TASK_PRIORITIES.find((priority) => priority.toLowerCase() === normalizedValue)
+}
+
 export interface Task {
   id: string
   title: string
@@ -68,5 +73,13 @@ export function updateTaskStatus(taskId: string, status: TaskStatus, source: Tas
   task.status = status
   source.splice(taskIndex, 1)
   source.unshift(task)
+  return task
+}
+
+export function updateTaskPriority(taskId: string, priority: TaskPriority, source: Task[] = tasks): Task | undefined {
+  const task = source.find((candidate) => candidate.id === taskId)
+  if (!task) return undefined
+
+  task.priority = priority
   return task
 }

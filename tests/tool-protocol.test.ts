@@ -21,4 +21,12 @@ describe('tool protocol', () => {
       arguments: { taskId: 't-1', status: 'Done' },
     }))).toEqual({ kind: 'tool_call', toolCall: { name: 'set_task_status', input: { taskId: 't-1', status: 'Done' } } })
   })
+
+  it('accepts the task priority mutation shape', () => {
+    expect(parseAssistantResponse(JSON.stringify({
+      kind: 'tool_call',
+      tool: 'set_task_priority',
+      arguments: { taskId: 't-5', priority: 'low' },
+    }))).toEqual({ kind: 'tool_call', toolCall: { name: 'set_task_priority', input: { taskId: 't-5', priority: 'low' } } })
+  })
 })

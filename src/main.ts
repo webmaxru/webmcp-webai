@@ -3,8 +3,8 @@ import assistantSystemPromptTemplate from './assistant-system-prompt.md?raw'
 import toolDetails from './data/tools.json'
 import { mergeDownloadProgress } from './prompt-download'
 import { isUnknownPromptApiError, PROMPT_API_RETRY_LIMIT } from './prompt-retry'
-import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskStatus } from './mock-api'
-import { normalizeTaskStatus, TASK_STATUSES } from './task-data'
+import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskPriority, setProjectTaskStatus } from './mock-api'
+import { normalizeTaskPriority, normalizeTaskStatus, TASK_PRIORITIES, TASK_STATUSES } from './task-data'
 import { applyBulkTaskStatus, getBulkTaskStatus, parseSearchMatches } from './bulk-task-actions'
 import { assistantResponseConstraint, normalizeToolInput, parseAssistantResponse, validateToolInput } from './tool-protocol'
 import { createAppState, type AppState, type ChatMessage, type DebugLevel, type LocalTool, type PromptApiRequest, type PromptLanguageModel, type PromptSession, type Scene, type ToolCall, type ToolDetails, type WebMcpContext } from './app-types'
@@ -41,6 +41,21 @@ const tools: LocalTool[] = [
       const normalizedStatus = normalizeTaskStatus(status)
       if (!normalizedStatus) return JSON.stringify({ error: `Invalid status. Use one of: ${TASK_STATUSES.join(', ')}` })
       const task = setProjectTaskStatus(taskId, normalizedStatus)
+      if (!task) return JSON.stringify({ error: 'Task not found' })
+      state.recentlyUpdatedTaskId = task.id
+      render()
+      window.setTimeout(() => {
+        if (state.recentlyUpdatedTaskId === task.id) state.recentlyUpdatedTaskId = undefined
+      }, 700)
+      return JSON.stringify(task)
+    },
+  },
+  {
+    details: toolDetails[4],
+    run: ({ taskId = '', priority = 'Medium' }) => {
+      const normalizedPriority = normalizeTaskPriority(priority)
+      if (!normalizedPriority) return JSON.stringify({ error: `Invalid priority. Use one of: ${TASK_PRIORITIES.join(', ')}` })
+      const task = setProjectTaskPriority(taskId, normalizedPriority)
       if (!task) return JSON.stringify({ error: 'Task not found' })
       state.recentlyUpdatedTaskId = task.id
       render()
@@ -243,7 +258,7 @@ function invokeTool(name: string, input: Record<string, string> = {}, source = '
   const validationError = validateToolInput(name, normalizedInput)
   if (validationError) {
     debugLog('error', `Rejected invalid ${name} arguments`, validationError)
-    return JSON.stringify({ error: validationError, retry: 'Follow the required tool chain and call search_tasks before set_task_status.' })
+    return JSON.stringify({ error: validationError, retry: 'Follow the required tool chain and call search_tasks before changing a task.' })
   }
   const statusMessages = tool.details.statusMessages
   const statusMessage: ChatMessage | undefined = statusMessages ? { role: 'status', text: statusMessages.running } : undefined
