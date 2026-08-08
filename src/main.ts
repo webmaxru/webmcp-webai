@@ -1,109 +1,21 @@
 import './style.css'
 import assistantSystemPromptTemplate from './assistant-system-prompt.md?raw'
-import conversationStarters from './conversation-starters.json'
 import toolDetails from './data/tools.json'
 import { mergeDownloadProgress } from './prompt-download'
 import { isUnknownPromptApiError, PROMPT_API_RETRY_LIMIT } from './prompt-retry'
 import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskStatus } from './mock-api'
-import { normalizeTaskStatus, TASK_STATUSES, type Task } from './task-data'
+import { normalizeTaskStatus, TASK_STATUSES } from './task-data'
 import { applyBulkTaskStatus, getBulkTaskStatus, parseSearchMatches } from './bulk-task-actions'
 import { assistantResponseConstraint, normalizeToolInput, parseAssistantResponse, validateToolInput } from './tool-protocol'
+import { createAppState, type AppState, type ChatMessage, type DebugLevel, type LocalTool, type PromptApiRequest, type PromptLanguageModel, type PromptSession, type Scene, type ToolCall, type ToolDetails, type WebMcpContext } from './app-types'
+import { render as renderView } from './render'
 
 const appData = getAppData()
 const currentUser = getCurrentUser()
 const project = getProject()
 
-type Scene = 'overview' | 'activity' | 'settings' | 'debug'
-type DebugLevel = 'info' | 'success' | 'error' | 'pending'
-
-interface ToolCall {
-  id: number
-  name: string
-  description: string
-  source: string
-  input: string
-  output: string
-  status: 'complete' | 'running'
-  startedAt: number
-  completedAt?: number
-  durationMs?: number
-}
-
-interface LocalTool {
-  details: ToolDetails
-  run: (input: Record<string, string>) => string
-}
-
-type ToolDetails = (typeof toolDetails)[number]
-
 const toolDetailsByName = Object.fromEntries(toolDetails.map((tool) => [tool.name, tool])) as Record<string, ToolDetails>
-
-interface WebMcpContext {
-  registerTool: (tool: {
-    name: string
-    title: string
-    description: string
-    inputSchema: Record<string, unknown>
-    annotations: { readOnlyHint: boolean }
-    execute: (input: Record<string, string>) => Promise<unknown>
-  }, options?: { signal?: AbortSignal }) => void | Promise<void>
-  unregisterTool?: (name: string) => void
-  getTools?: () => WebMcpTool[] | Promise<WebMcpTool[]>
-}
-
-interface WebMcpTool {
-  name: string
-  title?: string
-  description: string
-  inputSchema?: Record<string, unknown>
-}
-
-interface PromptLanguageModel {
-  availability?: (options?: Record<string, unknown>) => Promise<string> | string
-  create: (options: Record<string, unknown>) => Promise<PromptSession>
-}
-
-interface PromptSession {
-  prompt: (input: string, options?: { responseConstraint?: object }) => Promise<string>
-  destroy?: () => void
-}
-
-interface PromptApiRequest {
-  operation: 'create' | 'prompt'
-  startedAt: number
-  request: Record<string, unknown>
-  response: string | null
-}
-
-type ChatMessage = { role: 'user' | 'assistant' | 'status'; text: string }
-
-const state = {
-  scene: 'overview' as Scene,
-  filter: 'All',
-  toolCalls: [] as ToolCall[],
-  callId: 0,
-  chat: [] as ChatMessage[],
-  promptMode: 'mock' as 'prompt-api' | 'mock',
-  webMcpMode: 'mock' as 'webmcp' | 'mock',
-  webMcpRegistrationStarted: false,
-  webMcpRegistration: 'pending' as 'pending' | 'complete' | 'unavailable' | 'error',
-  webMcpRegisteredTools: [] as string[],
-  webMcpToolCatalog: [] as WebMcpTool[],
-  webMcpErrors: [] as string[],
-  promptApiAvailable: false,
-  promptAvailability: 'checking',
-  promptDownload: 'unknown',
-  promptSessionState: 'idle' as 'idle' | 'creating' | 'ready' | 'error',
-  promptSessionRef: null as PromptSession | null,
-  promptSessionPromise: null as Promise<PromptSession> | null,
-  promptDownloadProgress: null as number | null,
-  promptRequests: [] as PromptApiRequest[],
-  debugLogs: [] as { time: string; level: DebugLevel; message: string; detail?: string }[],
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character]!)
-}
+const state: AppState = createAppState()
 
 function debugLog(level: DebugLevel, message: string, detail?: string) {
   state.debugLogs.unshift({ time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), level, message, detail })
@@ -441,13 +353,14 @@ function restartConversation() {
   render()
 }
 
+/*
 function renderTask(task: Task) {
   return `<article class="task-row"><div class="task-title"><span class="status-dot ${task.status.toLowerCase().replace(' ', '-')}"></span><strong>${escapeHtml(task.title)}</strong><span class="tag ${task.priority.toLowerCase()}">${task.priority}</span></div><div class="task-meta"><span>${task.owner}</span><span>${task.due}</span><span class="status-text">${task.status}</span></div></article>`
 }
 
 function render() {
   const filteredTasks = state.filter === 'All' ? project.tasks : project.tasks.filter((task) => task.status === state.filter)
-  const chat = state.chat.map((message) => `<div class="chat-message ${message.role}"><span class="chat-label">${message.role === 'user' ? 'YOU' : message.role === 'status' ? 'WORKSPACE' : 'ASSISTANT'}</span><p>${escapeHtml(message.text).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p></div>`).join('')
+  const chat = ''
   const starterButtons = conversationStarters.map((starter) => `<button class="starter-pill" type="button" data-prompt="${escapeHtml(starter.prompt)}" title="${escapeHtml(starter.prompt)}">${escapeHtml(starter.label)}</button>`).join('')
   const emptyStarterButtons = conversationStarters.map((starter) => `<button class="starter-pill" type="button" data-prompt-submit="${escapeHtml(starter.prompt)}" title="${escapeHtml(starter.prompt)}">${escapeHtml(starter.prompt)}</button>`).join('')
   document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -486,6 +399,21 @@ function renderSettings() {
   const downloadLabel = state.promptDownloadProgress === null ? state.promptDownload : `${state.promptDownload} ${Math.round(state.promptDownloadProgress * 100)}%`
   const progressMarkup = state.promptDownload === 'downloading' ? `<div class="download-progress"><div class="download-progress-bar" style="width:${state.promptDownloadProgress === null ? '35' : Math.round(state.promptDownloadProgress * 100)}%"></div></div>` : ''
   return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">WORKSPACE / SETTINGS</span><h1>Local by design</h1><p>These values are deliberately visible: the page owns the data boundary.</p></div><button class="primary-button" data-action="prepare-model">↥ Prepare local model</button></div><div class="settings-grid"><div class="settings-card"><span class="eyebrow">AUTH SESSION</span><h2>${currentUser.name}</h2><p>${currentUser.role} · signed in locally</p><div class="permission-row">${currentUser.permissions.map((permission) => `<span>${permission}</span>`).join('')}</div></div><div class="settings-card"><span class="eyebrow">BROWSER CAPABILITIES</span><div class="capability"><span class="cap-dot ${state.promptMode === 'prompt-api' ? 'on' : ''}"></span><div><strong>Prompt API</strong><small>${state.promptMode === 'prompt-api' ? 'Available and active' : 'Fallback mode active'}</small></div></div><div class="capability"><span class="cap-dot ${state.webMcpMode === 'webmcp' ? 'on' : ''}"></span><div><strong>WebMCP</strong><small>${state.webMcpMode === 'webmcp' ? 'Tools registered with browser' : 'Demo registry active'}</small></div></div></div></div><div class="debug-status-grid settings-runtime"><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">WEBMCP</span>${status(state.webMcpRegistration, state.webMcpRegistration === 'complete')}</div><div class="debug-big">${state.webMcpRegisteredTools.length}<em>/ ${tools.length} tools</em></div><div class="status-line"><span>Secure context</span>${status(secure ? 'yes' : 'no', secure)}</div><div class="status-line"><span>document.modelContext</span>${status(documentContext ? 'available' : 'missing', documentContext)}</div><div class="status-line"><span>navigator.modelContext</span>${status(navigatorContext ? 'available (legacy)' : 'missing', navigatorContext)}</div><div class="status-line"><span>Registration errors</span>${status(String(state.webMcpErrors.length), state.webMcpErrors.length === 0)}</div></div><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">PROMPT API</span>${status(state.promptAvailability, state.promptApiAvailable)}</div><div class="debug-big">${state.promptSessionState}<em> session</em></div><div class="status-line"><span>LanguageModel</span>${status(state.promptApiAvailable ? 'available' : 'missing', state.promptApiAvailable)}</div><div class="status-line"><span>Model download</span>${status(downloadLabel, state.promptDownload === 'available')}</div>${progressMarkup}<div class="status-line"><span>Last model path</span>${status(state.promptMode === 'prompt-api' ? 'native response' : 'not used', state.promptMode === 'prompt-api')}</div><small class="debug-help">Availability is passive. Use “Prepare local model” or send a prompt to call LanguageModel.create() and begin downloading when needed. The session includes the page tools.</small></div></div><details class="debug-section system-prompt" open><summary><span><span class="eyebrow">PROMPT API / PARAMETERS</span><strong>Show all parameters configured for the Prompt API</strong></span><span class="tool-count">${state.webMcpToolCatalog.length} LIVE TOOLS</span></summary><pre>${escapeHtml(JSON.stringify(promptApiSettings(), null, 2))}</pre></details><div class="architecture-note"><span>⌘</span><div><strong>No backend LLM. No API tokens.</strong><p>Tools run against the state this page already has. In a production browser with WebMCP enabled, the same registry is handed to the browser's model context API.</p></div></div></section>`
+}
+
+*/
+
+function render() {
+  renderView({
+    state,
+    appData,
+    currentUser,
+    project,
+    toolCount: tools.length,
+    toolDetailsByName,
+    promptApiSettings,
+  })
+  bindEvents()
 }
 
 function bindEvents() {
