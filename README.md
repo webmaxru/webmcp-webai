@@ -17,7 +17,7 @@ For Chrome preview testing, use a supported Chrome build, enable the Prompt API/
 
 1. Start on **Overview** and point out that tasks, permissions, and health are already in page memory.
 2. Ask “What is the project health?” and expand **Tool invocations**: the model chooses `get_project_summary`.
-3. Ask “Find high priority tasks”: the page runs `search_tasks` against local state and returns the result.
+3. Ask “Find high priority tasks”: the page runs the unified `search_tasks` tool against local state and returns the result. The same tool resolves a natural-language task description before a status update.
 4. Open **Activity** to show the calls are inspectable, then **Settings** to show the local auth boundary and browser capability status.
 5. Open **Debug** to show secure-context checks, the active `document.modelContext`/legacy fallback surface, per-tool registration results, Prompt API availability, local model download status, and the full runtime log.
 6. Explain that unsupported browsers report an explicit capability error; there is no fake assistant response, server-side model, secret, or data replication requirement.

@@ -68,7 +68,7 @@ const assistantResponseConstraint = {
   additionalProperties: false,
   properties: {
     kind: { type: 'string', enum: ['tool_call', 'final'] },
-    tool: { type: 'string', enum: ['find_task', 'get_project_summary', 'search_tasks', 'get_current_user', 'set_task_status'] },
+    tool: { type: 'string', enum: ['get_project_summary', 'search_tasks', 'get_current_user', 'set_task_status'] },
     arguments: { type: 'object', additionalProperties: { type: 'string' } },
     answer: { type: 'string' },
   },
@@ -108,12 +108,6 @@ function debugLog(level: DebugLevel, message: string, detail?: string) {
 
 const tools: LocalTool[] = [
   {
-    name: 'find_task',
-    description: 'Resolve a natural-language task description to the exact loaded task ID. Use before changing status when the user did not provide an exact ID.',
-    input: '{ "query": "accessibility task" }',
-    run: ({ query = '' }) => JSON.stringify({ matches: searchProjectTasks(query) }),
-  },
-  {
     name: 'get_project_summary',
     description: 'Read the project health, task counts, and launch context from page-local state.',
     input: '{}',
@@ -121,9 +115,9 @@ const tools: LocalTool[] = [
   },
   {
     name: 'search_tasks',
-    description: 'Search the tasks already loaded in this page by title, owner, priority, or status.',
+    description: 'Search or resolve tasks already loaded in this page by title, owner, priority, or status. Use the returned matches to identify an exact task before changing its status.',
     input: '{ "query": "string" }',
-    run: ({ query = '' }) => JSON.stringify(searchProjectTasks(query)),
+    run: ({ query = '' }) => JSON.stringify({ matches: searchProjectTasks(query) }),
   },
   {
     name: 'get_current_user',
@@ -147,9 +141,8 @@ const tools: LocalTool[] = [
 ]
 
 const toolSchemas: Record<string, Record<string, unknown>> = {
-  find_task: { type: 'object', properties: { query: { type: 'string', description: 'The original task description from the user' } }, required: ['query'] },
   get_project_summary: { type: 'object', properties: {} },
-  search_tasks: { type: 'object', properties: { query: { type: 'string', description: 'Text to match against task fields' } }, required: ['query'] },
+  search_tasks: { type: 'object', properties: { query: { type: 'string', description: 'The original task description or search text from the user' } }, required: ['query'] },
   get_current_user: { type: 'object', properties: {} },
   set_task_status: {
     type: 'object',
@@ -159,7 +152,6 @@ const toolSchemas: Record<string, Record<string, unknown>> = {
 }
 
 const toolStatusMessages: Record<string, { running: string; complete: string }> = {
-  find_task: { running: 'Finding the matching task…', complete: 'The matching task is ready.' },
   get_project_summary: { running: 'Checking the project health…', complete: 'The latest project health is ready.' },
   search_tasks: { running: 'Searching the workspace tasks…', complete: 'The task results are ready.' },
   get_current_user: { running: 'Checking your workspace access…', complete: 'Your workspace access is ready.' },
@@ -196,8 +188,8 @@ TOOL USE IS REQUIRED
 - Before answering any question about project health, task counts, task details, task search results, the signed-in user, or permissions, call the relevant page tool.
 - If a request could be answered from workspace state, prefer a tool call over a general-knowledge answer.
 - For a task search, call search_tasks with the user's words as the query. Do not silently narrow, rewrite, or invent filters.
-- For a status change, if the user provides a natural-language description instead of an exact task ID, call find_task first with the user's original words. Never invent an ID.
-- Do not call set_task_status until find_task returns exactly one match. Use that match's exact id and the requested status.
+- For a status change, if the user provides a natural-language description instead of an exact task ID, call search_tasks first with the user's original words. Never invent an ID.
+- Do not call set_task_status until search_tasks returns exactly one match. Use that match's exact id and the requested status.
 
 TOOL CHAINING
 - Treat the user's request as a workflow, not necessarily a single tool call.
