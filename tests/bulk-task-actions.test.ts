@@ -11,6 +11,11 @@ describe('bulk task actions', () => {
     expect(getBulkTaskStatus('Find all high priority tasks')).toBeUndefined()
   })
 
+  it('recognizes a follow-up mutation for the previously found tasks', () => {
+    expect(getBulkTaskStatus('Set their status to done', true)).toBe('Done')
+    expect(getBulkTaskStatus('Set their status to done')).toBeUndefined()
+  })
+
   it('parses only search results containing task identifiers', () => {
     expect(parseSearchMatches(JSON.stringify({
       matches: [{ id: 't-1', title: 'First' }, { title: 'Missing id' }, 'invalid'],

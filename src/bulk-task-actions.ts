@@ -1,7 +1,8 @@
 import { normalizeTaskStatus, type Task, type TaskStatus } from './task-data'
 
-export function getBulkTaskStatus(message: string): TaskStatus | undefined {
-  if (!/\ball\b/i.test(message)) return undefined
+export function getBulkTaskStatus(message: string, hasPriorSearchMatches = false): TaskStatus | undefined {
+  const refersToPriorMatches = hasPriorSearchMatches && /\b(their|those|these|matching|found)\b/i.test(message)
+  if (!/\ball\b/i.test(message) && !refersToPriorMatches) return undefined
 
   const statusMatch = message.match(/(?:\b(?:status|statuses)\b[\s\S]*?\bto\b|\bas\b)\s+(todo|in[\s_-]*progress|done)\b/i)
   return statusMatch ? normalizeTaskStatus(statusMatch[1]) : undefined

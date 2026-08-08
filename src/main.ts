@@ -4,7 +4,7 @@ import toolDetails from './data/tools.json'
 import { mergeDownloadProgress } from './prompt-download'
 import { isUnknownPromptApiError, PROMPT_API_RETRY_LIMIT } from './prompt-retry'
 import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskPriority, setProjectTaskStatus } from './mock-api'
-import { normalizeTaskPriority, normalizeTaskStatus, TASK_PRIORITIES, TASK_STATUSES } from './task-data'
+import { normalizeTaskPriority, normalizeTaskStatus, TASK_PRIORITIES, TASK_STATUSES, type Task } from './task-data'
 import { applyBulkTaskStatus, getBulkTaskStatus, parseSearchMatches } from './bulk-task-actions'
 import { assistantResponseConstraint, normalizeToolInput, parseAssistantResponse, validateToolInput } from './tool-protocol'
 import { createAppState, type AppState, type ChatMessage, type DebugLevel, type LocalTool, type PromptApiRequest, type PromptLanguageModel, type PromptSession, type Scene, type ToolCall, type ToolDetails, type WebMcpContext } from './app-types'
@@ -17,6 +17,7 @@ const project = getProject()
 const toolDetailsByName = Object.fromEntries(toolDetails.map((tool) => [tool.name, tool])) as Record<string, ToolDetails>
 const state: AppState = createAppState()
 let chatRequestTimer: ReturnType<typeof setTimeout> | null = null
+let recentSearchMatches: Task[] = []
 
 function debugLog(level: DebugLevel, message: string, detail?: string) {
   state.debugLogs.unshift({ time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), level, message, detail })
@@ -299,9 +300,23 @@ async function runAgenticLoop(session: PromptSession, message: string) {
     }
 
     debugLog('info', `Parsed constrained tool call ${toolCall.name}`, JSON.stringify(toolCall.input))
-    const bulkStatus = getBulkTaskStatus(message)
+    const bulkStatus = getBulkTaskStatus(message, recentSearchMatches.length > 0)
     let result: string
-    if (toolCall.name === 'set_task_status' && bulkStatus && bulkUpdates.has(toolCall.input.taskId)) {
+    if (toolCall.name === 'set_task_status' && bulkStatus && recentSearchMatches.length > 0 && bulkUpdates.size === 0) {
+      const updates = applyBulkTaskStatus(recentSearchMatches, bulkStatus, (taskId, status) => JSON.parse(invokeTool(
+        'set_task_status',
+        { taskId, status },
+        'Prompt API bulk task update',
+      )))
+      updates.forEach((update) => {
+        if (update && typeof update === 'object' && 'id' in update && typeof update.id === 'string') {
+          bulkUpdates.set(update.id, update)
+        }
+      })
+      recentSearchMatches = []
+      result = JSON.stringify({ updates })
+      debugLog('success', 'Completed bulk task status update', `${updates.length} matching task(s) updated to ${bulkStatus}.`)
+    } else if (toolCall.name === 'set_task_status' && bulkStatus && bulkUpdates.has(toolCall.input.taskId)) {
       result = JSON.stringify({
         alreadyUpdated: true,
         update: bulkUpdates.get(toolCall.input.taskId),
@@ -312,6 +327,7 @@ async function runAgenticLoop(session: PromptSession, message: string) {
     }
     if (toolCall.name === 'search_tasks' && bulkStatus) {
       const matches = parseSearchMatches(result)
+      recentSearchMatches = []
       const updates = applyBulkTaskStatus(matches, bulkStatus, (taskId, status) => JSON.parse(invokeTool(
         'set_task_status',
         { taskId, status },
@@ -324,6 +340,8 @@ async function runAgenticLoop(session: PromptSession, message: string) {
       })
       result = JSON.stringify({ matches, updates })
       debugLog('success', 'Completed bulk task status update', `${updates.length} matching task(s) updated to ${bulkStatus}.`)
+    } else if (toolCall.name === 'search_tasks') {
+      recentSearchMatches = parseSearchMatches(result)
     }
     debugLog('success', `Tool result returned to model`, `${toolCall.name}: ${result}`)
     const followUp = `The page tool "${toolCall.name}" returned this result:
@@ -392,6 +410,7 @@ function restartConversation() {
   state.promptMode = 'mock'
   state.chatRequestPending = false
   state.chat = []
+  recentSearchMatches = []
   state.toolCalls = []
   state.callId = 0
   debugLog('info', 'Conversation restarted', 'The chat and Prompt API session were reset.')
