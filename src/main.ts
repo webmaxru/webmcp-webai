@@ -4,6 +4,7 @@ import conversationStarters from './conversation-starters.json'
 import { mergeDownloadProgress } from './prompt-download'
 import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskStatus } from './mock-api'
 import { normalizeTaskStatus, TASK_STATUSES, type Task } from './task-data'
+import { assistantResponseConstraint, parseAssistantResponse, validateToolInput } from './tool-protocol'
 
 const appData = getAppData()
 const currentUser = getCurrentUser()
@@ -68,24 +69,7 @@ interface PromptApiRequest {
   request: Record<string, unknown>
 }
 
-interface ParsedToolCall {
-  name: string
-  input: Record<string, string>
-}
-
 type ChatMessage = { role: 'user' | 'assistant' | 'status'; text: string }
-
-const assistantResponseConstraint = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    kind: { type: 'string', enum: ['tool_call', 'final'] },
-    tool: { type: 'string', enum: ['get_project_summary', 'search_tasks', 'get_current_user', 'set_task_status'] },
-    arguments: { type: 'object', additionalProperties: { type: 'string' } },
-    answer: { type: 'string' },
-  },
-  required: ['kind'],
-}
 
 const state = {
   scene: 'overview' as Scene,
@@ -154,13 +138,14 @@ const tools: LocalTool[] = [
 ]
 
 const toolSchemas: Record<string, Record<string, unknown>> = {
-  get_project_summary: { type: 'object', properties: {} },
-  search_tasks: { type: 'object', properties: { query: { type: 'string', description: 'The original task description or search text from the user' } }, required: ['query'] },
-  get_current_user: { type: 'object', properties: {} },
+  get_project_summary: { type: 'object', properties: {}, additionalProperties: false },
+  search_tasks: { type: 'object', properties: { query: { type: 'string', description: 'The original task description or search text from the user' } }, required: ['query'], additionalProperties: false },
+  get_current_user: { type: 'object', properties: {}, additionalProperties: false },
   set_task_status: {
     type: 'object',
     properties: { taskId: { type: 'string' }, status: { type: 'string', enum: [...TASK_STATUSES], description: 'Status is case-insensitive; use "In progress" for active work.' } },
     required: ['taskId', 'status'],
+    additionalProperties: false,
   },
 }
 
@@ -351,6 +336,11 @@ async function ensurePromptSession() {
 function invokeTool(name: string, input: Record<string, string> = {}, source = 'Page tool') {
   const tool = tools.find((candidate) => candidate.name === name)
   if (!tool) return 'Tool not found'
+  const validationError = validateToolInput(name, input)
+  if (validationError) {
+    debugLog('error', `Rejected invalid ${name} arguments`, validationError)
+    return JSON.stringify({ error: validationError, retry: 'Follow the required tool chain and call search_tasks before set_task_status.' })
+  }
   const statusMessages = toolStatusMessages[name]
   const statusMessage: ChatMessage | undefined = statusMessages ? { role: 'status', text: statusMessages.running } : undefined
   if (statusMessage) {
@@ -398,22 +388,6 @@ Use this result to answer the user's original request. If another registered too
   }
 
   throw new Error('The agentic tool loop exceeded its eight-step limit.')
-}
-
-function parseAssistantResponse(response: string): { kind: 'final'; answer: string } | { kind: 'tool_call'; toolCall: ParsedToolCall } {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(response)
-  } catch {
-    throw new Error('The local model returned invalid JSON instead of the constrained response format.')
-  }
-  if (!parsed || typeof parsed !== 'object') throw new Error('The local model returned an invalid response object.')
-  const value = parsed as Record<string, unknown>
-  if (value.kind === 'final' && typeof value.answer === 'string') return { kind: 'final', answer: value.answer }
-  if (value.kind === 'tool_call' && typeof value.tool === 'string' && value.arguments && typeof value.arguments === 'object' && !Array.isArray(value.arguments)) {
-    return { kind: 'tool_call', toolCall: { name: value.tool, input: value.arguments as Record<string, string> } }
-  }
-  throw new Error('The local model returned a response that did not match the constrained schema.')
 }
 
 async function askAgent(message: string) {
