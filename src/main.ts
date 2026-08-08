@@ -267,6 +267,7 @@ async function runAgenticLoop(session: PromptSession, message: string) {
   if (isUnknownPromptApiError(response)) throw new Error(response)
   recordPromptResponse(initialRequest, response)
   const registeredNames = new Set(state.webMcpToolCatalog.map((tool) => tool.name))
+  const bulkUpdates = new Map<string, Record<string, unknown>>()
 
   for (let step = 0; step < 8; step += 1) {
     const parsed = parseAssistantResponse(response)
@@ -278,8 +279,17 @@ async function runAgenticLoop(session: PromptSession, message: string) {
     }
 
     debugLog('info', `Parsed constrained tool call ${toolCall.name}`, JSON.stringify(toolCall.input))
-    let result = invokeTool(toolCall.name, toolCall.input, 'Prompt API agentic loop')
     const bulkStatus = getBulkTaskStatus(message)
+    let result: string
+    if (toolCall.name === 'set_task_status' && bulkStatus && bulkUpdates.has(toolCall.input.taskId)) {
+      result = JSON.stringify({
+        alreadyUpdated: true,
+        update: bulkUpdates.get(toolCall.input.taskId),
+      })
+      debugLog('info', 'Skipped duplicate bulk task status update', toolCall.input.taskId)
+    } else {
+      result = invokeTool(toolCall.name, toolCall.input, 'Prompt API agentic loop')
+    }
     if (toolCall.name === 'search_tasks' && bulkStatus) {
       const matches = parseSearchMatches(result)
       const updates = applyBulkTaskStatus(matches, bulkStatus, (taskId, status) => JSON.parse(invokeTool(
@@ -287,6 +297,11 @@ async function runAgenticLoop(session: PromptSession, message: string) {
         { taskId, status },
         'Prompt API bulk task update',
       )))
+      updates.forEach((update) => {
+        if (update && typeof update === 'object' && 'id' in update && typeof update.id === 'string') {
+          bulkUpdates.set(update.id, update)
+        }
+      })
       result = JSON.stringify({ matches, updates })
       debugLog('success', 'Completed bulk task status update', `${updates.length} matching task(s) updated to ${bulkStatus}.`)
     }

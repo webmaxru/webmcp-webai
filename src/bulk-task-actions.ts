@@ -30,5 +30,10 @@ export function applyBulkTaskStatus<T>(
   status: TaskStatus,
   update: (taskId: string, status: TaskStatus) => T,
 ): T[] {
-  return matches.map((task) => update(task.id, status))
+  const updatedTaskIds = new Set<string>()
+  return matches.flatMap((task) => {
+    if (updatedTaskIds.has(task.id)) return []
+    updatedTaskIds.add(task.id)
+    return [update(task.id, status)]
+  })
 }

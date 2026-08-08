@@ -25,4 +25,14 @@ describe('bulk task actions', () => {
       { taskId: 't-4', status: 'Done' },
     ])
   })
+
+  it('updates a duplicated search match only once', () => {
+    const matches = parseSearchMatches(JSON.stringify({ matches: [{ id: 't-1' }, { id: 't-1' }] }))
+    const updates: string[] = []
+    applyBulkTaskStatus(matches, 'Done', (taskId) => {
+      updates.push(taskId)
+      return taskId
+    })
+    expect(updates).toEqual(['t-1'])
+  })
 })
