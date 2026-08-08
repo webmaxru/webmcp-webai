@@ -1,4 +1,5 @@
 import './style.css'
+import conversationStarters from './conversation-starters.json'
 import { mergeDownloadProgress } from './prompt-download'
 import { project, searchTasks, TASK_STATUSES, updateTaskStatus, type Task, type TaskStatus } from './task-data'
 
@@ -54,13 +55,6 @@ interface ParsedToolCall {
   name: string
   input: Record<string, string>
 }
-
-const conversationStarters = [
-  { label: 'Project health', prompt: 'What is the project health?' },
-  { label: 'High priority tasks', prompt: 'Find high priority tasks' },
-  { label: 'Signed-in user', prompt: 'Who am I signed in as?' },
-  { label: 'Update accessibility status', prompt: 'Set status of accessibility project to in progress' },
-]
 
 const state = {
   scene: 'overview' as Scene,
