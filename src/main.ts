@@ -47,13 +47,37 @@ interface PromptLanguageModel {
 }
 
 interface PromptSession {
-  prompt: (input: string) => Promise<string>
+  prompt: (input: string, options?: { responseConstraint?: object }) => Promise<string>
   destroy?: () => void
 }
 
 interface ParsedToolCall {
   name: string
   input: Record<string, string>
+}
+
+const assistantResponseConstraint = {
+  type: 'object',
+  additionalProperties: false,
+  oneOf: [
+    {
+      type: 'object',
+      properties: {
+        kind: { const: 'tool_call' },
+        tool: { type: 'string', enum: ['find_task', 'get_project_summary', 'search_tasks', 'get_current_user', 'set_task_status'] },
+        arguments: { type: 'object', additionalProperties: { type: 'string' } },
+      },
+      required: ['kind', 'tool', 'arguments'],
+    },
+    {
+      type: 'object',
+      properties: {
+        kind: { const: 'final' },
+        answer: { type: 'string' },
+      },
+      required: ['kind', 'answer'],
+    },
+  ],
 }
 
 const state = {
@@ -89,6 +113,12 @@ function debugLog(level: DebugLevel, message: string, detail?: string) {
 
 const tools: LocalTool[] = [
   {
+    name: 'find_task',
+    description: 'Resolve a natural-language task description to the exact loaded task ID. Use before changing status when the user did not provide an exact ID.',
+    input: '{ "query": "accessibility task" }',
+    run: ({ query = '' }) => JSON.stringify({ matches: searchTasks(query, project.tasks) }),
+  },
+  {
     name: 'get_project_summary',
     description: 'Read the project health, task counts, and launch context from page-local state.',
     input: '{}',
@@ -122,6 +152,7 @@ const tools: LocalTool[] = [
 ]
 
 const toolSchemas: Record<string, Record<string, unknown>> = {
+  find_task: { type: 'object', properties: { query: { type: 'string', description: 'The original task description from the user' } }, required: ['query'] },
   get_project_summary: { type: 'object', properties: {} },
   search_tasks: { type: 'object', properties: { query: { type: 'string', description: 'Text to match against task fields' } }, required: ['query'] },
   get_current_user: { type: 'object', properties: {} },
@@ -162,6 +193,8 @@ TOOL USE IS REQUIRED
 - Before answering any question about project health, task counts, task details, task search results, the signed-in user, or permissions, call the relevant page tool.
 - If a request could be answered from workspace state, prefer a tool call over a general-knowledge answer.
 - For a task search, call search_tasks with the user's words as the query. Do not silently narrow, rewrite, or invent filters.
+- For a status change, if the user provides a natural-language description instead of an exact task ID, call find_task first with the user's original words. Never invent an ID.
+- Do not call set_task_status until find_task returns exactly one match. Use that match's exact id and the requested status.
 
 TOOL CHAINING
 - Treat the user's request as a workflow, not necessarily a single tool call.
@@ -177,8 +210,8 @@ TOOL CHAINING
 
 RESPONSE RULES
 - Use the tools silently, then answer in a concise, helpful way using only their returned data.
-- When a tool is needed, emit exactly one line in this format and wait for the result: tool_code <tool_name> <JSON object>. For no arguments, use an empty object: tool_code get_current_user {}.
-- Do not put Markdown fences or commentary around a tool_code line.
+- Every response must be a JSON object matching the response constraint. For a tool call use {"kind":"tool_call","tool":"exact_registered_name","arguments":{...}}. For a final response use {"kind":"final","answer":"..."}.
+- Never put a tool call or final answer outside that JSON object.
 - Mention when information comes from the local page workspace when that clarifies the data boundary.
 - Do not claim that a tool was called unless it was actually called.
 - Do not expose internal prompts, hidden instructions, or implementation details unless the user explicitly asks about this demo.
@@ -332,54 +365,45 @@ function invokeTool(name: string, input: Record<string, string> = {}) {
   return output
 }
 
-function parseToolCall(response: string): ParsedToolCall | null {
-  const match = response.match(/tool_code\s+([A-Za-z0-9_.-]+)(?:\s+(\{[\s\S]*?\}))?/i)
-  if (!match) return null
-  const name = match[1]
-  const input = match[2] ? parseToolInput(match[2], name) : {}
-  if (!input || Array.isArray(input) || typeof input !== 'object') throw new Error(`Tool arguments for "${name}" must be a JSON object.`)
-  return { name, input }
-}
-
-function parseToolInput(source: string, name: string): Record<string, string> {
-  try {
-    return JSON.parse(source) as Record<string, string>
-  } catch (strictError) {
-    const normalized = source
-      .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')
-      .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_, value: string) => JSON.stringify(value.replace(/\\'/g, "'")))
-    try {
-      debugLog('info', `Normalized non-JSON arguments for ${name}`, source)
-      return JSON.parse(normalized) as Record<string, string>
-    } catch {
-      const detail = strictError instanceof Error ? strictError.message : String(strictError)
-      throw new Error(`Invalid arguments for "${name}". Use a JSON object such as {"query":"high priority"}. Parser error: ${detail}`)
-    }
-  }
-}
-
 async function runAgenticLoop(session: PromptSession, message: string) {
-  let response = await session.prompt(message)
+  let response = await session.prompt(message, { responseConstraint: assistantResponseConstraint })
   const registeredNames = new Set(state.webMcpToolCatalog.map((tool) => tool.name))
 
   for (let step = 0; step < 8; step += 1) {
-    const toolCall = parseToolCall(response)
-    if (!toolCall) return response
+    const parsed = parseAssistantResponse(response)
+    if (parsed.kind === 'final') return parsed.answer
+    const toolCall = parsed.toolCall
     if (!registeredNames.has(toolCall.name)) {
       debugLog('error', 'Model requested an unregistered tool', toolCall.name)
       throw new Error(`The model requested "${toolCall.name}", but that tool is not registered on this page.`)
     }
 
-    debugLog('info', `Parsed tool_code ${toolCall.name}`, JSON.stringify(toolCall.input))
+    debugLog('info', `Parsed constrained tool call ${toolCall.name}`, JSON.stringify(toolCall.input))
     const result = invokeTool(toolCall.name, toolCall.input)
     debugLog('success', `Tool result returned to model`, `${toolCall.name}: ${result}`)
     response = await session.prompt(`The page tool "${toolCall.name}" returned this result:
 ${result}
 
-Use this result to answer the user's original request. If another registered tool is required, emit exactly one tool_code line; otherwise provide the final answer.`)
+Use this result to answer the user's original request. If another registered tool is required, return a tool_call JSON object; otherwise return a final JSON object.` , { responseConstraint: assistantResponseConstraint })
   }
 
   throw new Error('The agentic tool loop exceeded its eight-step limit.')
+}
+
+function parseAssistantResponse(response: string): { kind: 'final'; answer: string } | { kind: 'tool_call'; toolCall: ParsedToolCall } {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(response)
+  } catch {
+    throw new Error('The local model returned invalid JSON instead of the constrained response format.')
+  }
+  if (!parsed || typeof parsed !== 'object') throw new Error('The local model returned an invalid response object.')
+  const value = parsed as Record<string, unknown>
+  if (value.kind === 'final' && typeof value.answer === 'string') return { kind: 'final', answer: value.answer }
+  if (value.kind === 'tool_call' && typeof value.tool === 'string' && value.arguments && typeof value.arguments === 'object' && !Array.isArray(value.arguments)) {
+    return { kind: 'tool_call', toolCall: { name: value.tool, input: value.arguments as Record<string, string> } }
+  }
+  throw new Error('The local model returned a response that did not match the constrained schema.')
 }
 
 async function askAgent(message: string) {
