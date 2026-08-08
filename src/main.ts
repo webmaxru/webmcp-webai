@@ -507,6 +507,7 @@ function render() {
     toolCount: tools.length,
     toolDetailsByName,
     promptApiSettings,
+    systemPrompt: buildAssistantSystemPrompt(),
   })
   bindEvents()
 }
