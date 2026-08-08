@@ -84,6 +84,12 @@ const project: Project = {
   ],
 }
 
+const conversationStarters = [
+  { label: 'Project health', prompt: 'What is the project health?' },
+  { label: 'High priority tasks', prompt: 'Find high priority tasks' },
+  { label: 'Signed-in user', prompt: 'Who am I signed in as?' },
+]
+
 const state = {
   scene: 'overview' as Scene,
   filter: 'All',
@@ -457,13 +463,14 @@ function renderTask(task: Task) {
 function render() {
   const filteredTasks = state.filter === 'All' ? project.tasks : project.tasks.filter((task) => task.status === state.filter)
   const chat = state.chat.map((message) => `<div class="chat-message ${message.role}"><span class="chat-label">${message.role === 'user' ? 'YOU' : 'LOCAL MODEL'}</span><p>${escapeHtml(message.text).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p></div>`).join('')
+  const starterButtons = conversationStarters.map((starter) => `<button class="starter-pill" type="button" data-prompt="${escapeHtml(starter.prompt)}" title="${escapeHtml(starter.prompt)}">${escapeHtml(starter.label)}</button>`).join('')
   document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="app-shell">
       <header class="topbar"><div class="brand"><span class="brand-mark">✦</span><span>WEB<span class="brand-muted">MCP</span></span><span class="brand-divider">/</span><span class="brand-context">ATLAS WORKSPACE</span></div><div class="top-actions"><span class="live-pill"><i></i> LOCAL-FIRST</span><button class="avatar" aria-label="Open user settings">JL</button></div></header>
       <div class="layout">
         <aside class="sidebar"><div class="side-label">WORKSPACE</div><button class="nav-item ${state.scene === 'overview' ? 'active' : ''}" data-scene="overview"><span>▦</span> Overview</button><button class="nav-item ${state.scene === 'activity' ? 'active' : ''}" data-scene="activity"><span>↗</span> Activity <b>12</b></button><button class="nav-item ${state.scene === 'debug' ? 'active' : ''}" data-scene="debug"><span>⌘</span> Debug</button><button class="nav-item ${state.scene === 'settings' ? 'active' : ''}" data-scene="settings"><span>⚙</span> Settings</button><div class="sidebar-spacer"></div><div class="connection-card"><span class="connection-icon">◉</span><div><strong>Page tools online</strong><small>${tools.length} tools · no backend</small></div></div><div class="user-card"><span class="avatar small">JL</span><div><strong>Jordan Lee</strong><small>Product lead</small></div><span>⌄</span></div></aside>
         <main class="main-content">${state.scene === 'settings' ? renderSettings() : state.scene === 'activity' ? renderActivity() : state.scene === 'debug' ? renderDebug() : renderOverview(filteredTasks)}</main>
-        <aside class="agent-panel"><div class="agent-heading"><div><span class="eyebrow">ON-DEVICE ASSISTANT</span><h2>Ask the workspace</h2></div><div class="agent-actions"><button class="restart-button" type="button" data-action="restart-conversation">Restart conversation</button><span class="model-badge">${state.promptMode === 'prompt-api' ? 'PROMPT API' : 'DEMO MODEL'}</span></div></div><p class="agent-description">The model can discover and call tools exposed by this page. Nothing leaves your browser.</p><div class="chat-log">${chat || '<div class="empty-chat"><span>✦</span><p>Try asking:</p></div>'}</div><form class="chat-form" id="chat-form"><input id="chat-input" aria-label="Ask the local model" placeholder="Ask about this workspace…" autocomplete="off"><button aria-label="Send message">↗</button></form><div class="conversation-starters" aria-label="Conversation starters"><button class="starter-pill" type="button" data-prompt="What is the project health?">Project health</button><button class="starter-pill" type="button" data-prompt="Find high priority tasks">High priority tasks</button><button class="starter-pill" type="button" data-prompt="Who am I signed in as?">Signed-in user</button></div></aside>
+        <aside class="agent-panel"><div class="agent-heading"><div><span class="eyebrow">ON-DEVICE ASSISTANT</span><h2>Ask the workspace</h2></div><div class="agent-actions"><button class="restart-button" type="button" data-action="restart-conversation">Restart conversation</button><span class="model-badge">${state.promptMode === 'prompt-api' ? 'PROMPT API' : 'DEMO MODEL'}</span></div></div><p class="agent-description">The model can discover and call tools exposed by this page. Nothing leaves your browser.</p><div class="chat-log">${chat || `<div class="empty-chat"><span>✦</span><p>Try asking:</p><div class="empty-starters" aria-label="Conversation starters">${starterButtons}</div></div>`}</div><form class="chat-form" id="chat-form"><input id="chat-input" aria-label="Ask the local model" placeholder="Ask about this workspace…" autocomplete="off"><button aria-label="Send message">↗</button></form><div class="conversation-starters" aria-label="Conversation starters">${starterButtons}</div></aside>
       </div>
     </div>`
   bindEvents()
@@ -497,7 +504,13 @@ function renderSettings() {
 function bindEvents() {
   document.querySelectorAll<HTMLElement>('[data-scene]').forEach((element) => element.addEventListener('click', () => { state.scene = element.dataset.scene as Scene; render() }))
   document.querySelectorAll<HTMLElement>('[data-filter]').forEach((element) => element.addEventListener('click', () => { state.filter = element.dataset.filter!; render() }))
-  document.querySelectorAll<HTMLButtonElement>('[data-prompt]').forEach((element) => element.addEventListener('click', () => { void askAgent(element.dataset.prompt || 'Give me a summary') }))
+  document.querySelectorAll<HTMLButtonElement>('[data-prompt]').forEach((element) => element.addEventListener('click', () => {
+    const input = document.querySelector<HTMLInputElement>('#chat-input')
+    if (input) {
+      input.value = element.dataset.prompt || ''
+      input.focus()
+    }
+  }))
   document.querySelector<HTMLFormElement>('#chat-form')?.addEventListener('submit', (event) => { event.preventDefault(); const input = document.querySelector<HTMLInputElement>('#chat-input'); if (input?.value.trim()) { const value = input.value.trim(); input.value = ''; void askAgent(value) } })
   document.querySelector<HTMLButtonElement>('[data-demo="summary"]')?.addEventListener('click', () => void askAgent('What is the project health?'))
   document.querySelector<HTMLButtonElement>('[data-action="restart-conversation"]')?.addEventListener('click', restartConversation)
