@@ -383,7 +383,7 @@ async function runAgenticLoop(session: PromptSession, message: string) {
     const followUp = `The page tool "${toolCall.name}" returned this result:
 ${result}
 
-Use this result to answer the user's original request. If another registered tool is required, return a tool_call JSON object; otherwise return a final JSON object.`
+Use this result to answer the user's original request. If the original request applies to multiple search matches, continue with one set_task_status tool_call for every remaining relevant match before returning a final JSON object. Otherwise, if another registered tool is required, return a tool_call JSON object; if the request is fully resolved, return a final JSON object.`
     recordPromptRequest('prompt', { input: followUp, options: promptOptions })
     response = await session.prompt(followUp, promptOptions)
   }
