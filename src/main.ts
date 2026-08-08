@@ -471,7 +471,7 @@ function renderTask(task: Task) {
 
 function render() {
   const filteredTasks = state.filter === 'All' ? project.tasks : project.tasks.filter((task) => task.status === state.filter)
-  const chat = state.chat.map((message) => `<div class="chat-message ${message.role}"><span class="chat-label">${message.role === 'user' ? 'YOU' : message.role === 'status' ? 'WORKSPACE' : 'LOCAL MODEL'}</span><p>${escapeHtml(message.text).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p></div>`).join('')
+  const chat = state.chat.map((message) => `<div class="chat-message ${message.role}"><span class="chat-label">${message.role === 'user' ? 'YOU' : message.role === 'status' ? 'WORKSPACE' : 'ASSISTANT'}</span><p>${escapeHtml(message.text).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p></div>`).join('')
   const starterButtons = conversationStarters.map((starter) => `<button class="starter-pill" type="button" data-prompt="${escapeHtml(starter.prompt)}" title="${escapeHtml(starter.prompt)}">${escapeHtml(starter.label)}</button>`).join('')
   const emptyStarterButtons = conversationStarters.map((starter) => `<button class="starter-pill" type="button" data-prompt-submit="${escapeHtml(starter.prompt)}" title="${escapeHtml(starter.prompt)}">${escapeHtml(starter.prompt)}</button>`).join('')
   document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
