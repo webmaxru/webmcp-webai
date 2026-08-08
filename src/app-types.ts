@@ -22,6 +22,13 @@ export interface LocalTool {
   run: (input: Record<string, string>) => string
 }
 
+export interface PromptTool {
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+  execute: (input: Record<string, string>) => Promise<string>
+}
+
 export interface WebMcpContext {
   registerTool: (tool: {
     name: string
