@@ -61,6 +61,8 @@ interface ParsedToolCall {
   input: Record<string, string>
 }
 
+type ChatMessage = { role: 'user' | 'assistant' | 'status'; text: string }
+
 const assistantResponseConstraint = {
   type: 'object',
   additionalProperties: false,
@@ -78,7 +80,7 @@ const state = {
   filter: 'All',
   toolCalls: [] as ToolCall[],
   callId: 0,
-  chat: [] as { role: 'user' | 'assistant'; text: string }[],
+  chat: [] as ChatMessage[],
   promptMode: 'mock' as 'prompt-api' | 'mock',
   webMcpMode: 'mock' as 'webmcp' | 'mock',
   webMcpRegistrationStarted: false,
@@ -154,6 +156,14 @@ const toolSchemas: Record<string, Record<string, unknown>> = {
     properties: { taskId: { type: 'string' }, status: { type: 'string', enum: [...TASK_STATUSES], description: 'Status is case-insensitive; use "In progress" for active work.' } },
     required: ['taskId', 'status'],
   },
+}
+
+const toolStatusMessages: Record<string, { running: string; complete: string }> = {
+  find_task: { running: 'Finding the matching task…', complete: 'The matching task is ready.' },
+  get_project_summary: { running: 'Checking the project health…', complete: 'The latest project health is ready.' },
+  search_tasks: { running: 'Searching the workspace tasks…', complete: 'The task results are ready.' },
+  get_current_user: { running: 'Checking your workspace access…', complete: 'Your workspace access is ready.' },
+  set_task_status: { running: 'Updating the task status…', complete: 'The task status has been updated.' },
 }
 
 const promptTools = tools.map((tool) => ({
@@ -348,12 +358,19 @@ async function ensurePromptSession() {
 function invokeTool(name: string, input: Record<string, string> = {}) {
   const tool = tools.find((candidate) => candidate.name === name)
   if (!tool) return 'Tool not found'
+  const statusMessages = toolStatusMessages[name]
+  const statusMessage: ChatMessage | undefined = statusMessages ? { role: 'status', text: statusMessages.running } : undefined
+  if (statusMessage) {
+    state.chat.push(statusMessage)
+    render()
+  }
   const call: ToolCall = { id: ++state.callId, name, input: JSON.stringify(input), output: 'Running…', status: 'running' }
   state.toolCalls.unshift(call)
   render()
   const output = tool.run(input)
   call.output = output
   call.status = 'complete'
+  if (statusMessage && statusMessages) statusMessage.text = statusMessages.complete
   render()
   return output
 }
@@ -438,7 +455,7 @@ function renderTask(task: Task) {
 
 function render() {
   const filteredTasks = state.filter === 'All' ? project.tasks : project.tasks.filter((task) => task.status === state.filter)
-  const chat = state.chat.map((message) => `<div class="chat-message ${message.role}"><span class="chat-label">${message.role === 'user' ? 'YOU' : 'LOCAL MODEL'}</span><p>${escapeHtml(message.text).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p></div>`).join('')
+  const chat = state.chat.map((message) => `<div class="chat-message ${message.role}"><span class="chat-label">${message.role === 'user' ? 'YOU' : message.role === 'status' ? 'WORKSPACE' : 'LOCAL MODEL'}</span><p>${escapeHtml(message.text).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p></div>`).join('')
   const starterButtons = conversationStarters.map((starter) => `<button class="starter-pill" type="button" data-prompt="${escapeHtml(starter.prompt)}" title="${escapeHtml(starter.prompt)}">${escapeHtml(starter.label)}</button>`).join('')
   const emptyStarterButtons = conversationStarters.map((starter) => `<button class="starter-pill" type="button" data-prompt-submit="${escapeHtml(starter.prompt)}" title="${escapeHtml(starter.prompt)}">${escapeHtml(starter.prompt)}</button>`).join('')
   document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -455,7 +472,7 @@ function render() {
 
 function renderOverview(tasks: Task[]) {
   const inProgress = project.tasks.filter((task) => task.status === 'In progress').length
-  return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">PROJECT / ${appData.dateLabel}</span><h1>Good morning, ${escapeHtml(currentUser.name.split(' ')[0])} <span class="wave">⌁</span></h1><p>${project.description}</p></div><button class="primary-button" data-demo="summary">✦ Ask the assistant</button></div><div class="metric-grid"><div class="metric-card"><span class="metric-label">PROJECT HEALTH</span><strong class="metric-value health"><i></i>${project.health}</strong><small>Based on current delivery signals</small></div><div class="metric-card"><span class="metric-label">OPEN TASKS</span><strong class="metric-value">${project.tasks.filter((task) => task.status !== 'Done').length}<em>/ ${project.tasks.length}</em></strong><small>${inProgress} in progress right now</small></div><div class="metric-card"><span class="metric-label">NEXT MILESTONE</span><strong class="metric-value date">${appData.nextMilestone}</strong><small>${appData.nextMilestoneLabel}</small></div></div><div class="section-header"><div><span class="eyebrow">LIVE WORKBOARD</span><h2>Tasks</h2></div><div class="filter-tabs">${['All', 'Todo', 'In progress', 'Done'].map((filter) => `<button class="${state.filter === filter ? 'selected' : ''}" data-filter="${filter}">${filter}</button>`).join('')}</div></div><div class="task-list">${tasks.map(renderTask).join('')}</div></section>`
+  return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">PROJECT / ${appData.dateLabel}</span><h1>Good morning, ${escapeHtml(currentUser.name.split(' ')[0])} <span class="wave">⌁</span></h1><p>${project.description}</p></div></div><div class="metric-grid"><div class="metric-card"><span class="metric-label">PROJECT HEALTH</span><strong class="metric-value health"><i></i>${project.health}</strong><small>Based on current delivery signals</small></div><div class="metric-card"><span class="metric-label">OPEN TASKS</span><strong class="metric-value">${project.tasks.filter((task) => task.status !== 'Done').length}<em>/ ${project.tasks.length}</em></strong><small>${inProgress} in progress right now</small></div><div class="metric-card"><span class="metric-label">NEXT MILESTONE</span><strong class="metric-value date">${appData.nextMilestone}</strong><small>${appData.nextMilestoneLabel}</small></div></div><div class="section-header"><div><span class="eyebrow">LIVE WORKBOARD</span><h2>Tasks</h2></div><div class="filter-tabs">${['All', 'Todo', 'In progress', 'Done'].map((filter) => `<button class="${state.filter === filter ? 'selected' : ''}" data-filter="${filter}">${filter}</button>`).join('')}</div></div><div class="task-list">${tasks.map(renderTask).join('')}</div></section>`
 }
 
 function renderActivity() {
@@ -493,7 +510,6 @@ function bindEvents() {
     if (prompt) void askAgent(prompt)
   }))
   document.querySelector<HTMLFormElement>('#chat-form')?.addEventListener('submit', (event) => { event.preventDefault(); const input = document.querySelector<HTMLInputElement>('#chat-input'); if (input?.value.trim()) { const value = input.value.trim(); input.value = ''; void askAgent(value) } })
-  document.querySelector<HTMLButtonElement>('[data-demo="summary"]')?.addEventListener('click', () => void askAgent('What is the project health?'))
   document.querySelector<HTMLButtonElement>('[data-action="restart-conversation"]')?.addEventListener('click', restartConversation)
   document.querySelector<HTMLButtonElement>('[data-action="prepare-model"]')?.addEventListener('click', () => { void ensurePromptSession().catch((error) => debugLog('error', 'Local model preparation failed', error instanceof Error ? error.message : String(error))) })
 }
