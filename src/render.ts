@@ -44,18 +44,41 @@ function renderDebug({ state }: RenderContext) {
 }
 
 function renderFormattedSystemPrompt(prompt: string) {
-  return prompt.split(/\n\s*\n/).map((block) => {
-    const lines = block.split('\n').map((line) => line.trim()).filter(Boolean)
-    if (!lines.length) return ''
-    const firstLine = lines[0]
-    if (/^[A-Z][A-Z0-9 /-]+$/.test(firstLine)) {
-      return `<h3>${escapeHtml(firstLine)}</h3>`
+  const blocks: string[] = []
+  let paragraph: string[] = []
+  let bullets: string[] = []
+  const flushParagraph = () => {
+    if (paragraph.length) {
+      blocks.push(`<p>${paragraph.map((line) => escapeHtml(line)).join('<br>')}</p>`)
+      paragraph = []
     }
-    if (lines.every((line) => line.startsWith('- '))) {
-      return `<ul>${lines.map((line) => `<li>${escapeHtml(line.slice(2))}</li>`).join('')}</ul>`
+  }
+  const flushBullets = () => {
+    if (bullets.length) {
+      blocks.push(`<ul>${bullets.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`)
+      bullets = []
     }
-    return `<p>${lines.map((line) => escapeHtml(line)).join('<br>')}</p>`
-  }).join('')
+  }
+
+  prompt.split('\n').map((line) => line.trim()).forEach((line) => {
+    if (!line) {
+      flushParagraph()
+      flushBullets()
+    } else if (line.startsWith('- ')) {
+      flushParagraph()
+      bullets.push(line.slice(2))
+    } else if (/^[A-Z][A-Z0-9 /-]+$/.test(line)) {
+      flushParagraph()
+      flushBullets()
+      blocks.push(`<h3>${escapeHtml(line)}</h3>`)
+    } else {
+      flushBullets()
+      paragraph.push(line)
+    }
+  })
+  flushParagraph()
+  flushBullets()
+  return blocks.join('')
 }
 
 function renderSettings(context: RenderContext) {
