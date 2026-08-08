@@ -67,6 +67,7 @@ export interface AppState {
   toolCalls: ToolCall[]
   callId: number
   chat: ChatMessage[]
+  chatRequestPending: boolean
   promptMode: 'prompt-api' | 'mock'
   webMcpMode: 'webmcp' | 'mock'
   webMcpRegistrationStarted: boolean
@@ -92,6 +93,7 @@ export function createAppState(): AppState {
     toolCalls: [],
     callId: 0,
     chat: [],
+    chatRequestPending: false,
     promptMode: 'mock',
     webMcpMode: 'mock',
     webMcpRegistrationStarted: false,

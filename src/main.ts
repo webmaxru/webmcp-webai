@@ -16,6 +16,7 @@ const project = getProject()
 
 const toolDetailsByName = Object.fromEntries(toolDetails.map((tool) => [tool.name, tool])) as Record<string, ToolDetails>
 const state: AppState = createAppState()
+let chatRequestTimer: ReturnType<typeof setTimeout> | null = null
 
 function debugLog(level: DebugLevel, message: string, detail?: string) {
   state.debugLogs.unshift({ time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), level, message, detail })
@@ -322,6 +323,10 @@ Use this result to answer the user's original request. For an "all" status reque
 async function askAgent(message: string) {
  state.chat.push({ role: 'user', text: message })
  render()
+ chatRequestTimer = setTimeout(() => {
+   state.chatRequestPending = true
+   render()
+ }, 400)
  let answer: string
  let retryCount = 0
  while (true) {
@@ -352,15 +357,21 @@ async function askAgent(message: string) {
    }
  }
   state.chat.push({ role: 'assistant', text: answer })
+  if (chatRequestTimer) clearTimeout(chatRequestTimer)
+  chatRequestTimer = null
+  state.chatRequestPending = false
   render()
 }
 
 function restartConversation() {
+  if (chatRequestTimer) clearTimeout(chatRequestTimer)
+  chatRequestTimer = null
   state.promptSessionRef?.destroy?.()
   state.promptSessionRef = null
   state.promptSessionPromise = null
   state.promptSessionState = 'idle'
   state.promptMode = 'mock'
+  state.chatRequestPending = false
   state.chat = []
   state.toolCalls = []
   state.callId = 0
