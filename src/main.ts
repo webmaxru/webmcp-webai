@@ -61,6 +61,12 @@ interface PromptSession {
   destroy?: () => void
 }
 
+interface PromptApiRequest {
+  operation: 'create' | 'prompt'
+  startedAt: number
+  request: Record<string, unknown>
+}
+
 interface ParsedToolCall {
   name: string
   input: Record<string, string>
@@ -100,6 +106,7 @@ const state = {
   promptSessionRef: null as PromptSession | null,
   promptSessionPromise: null as Promise<PromptSession> | null,
   promptDownloadProgress: null as number | null,
+  promptRequests: [] as PromptApiRequest[],
   debugLogs: [] as { time: string; level: DebugLevel; message: string; detail?: string }[],
 }
 
@@ -305,6 +312,33 @@ function promptSessionOptions() {
   }
 }
 
+function promptToolRequestDefinitions() {
+  const registeredNames = new Set(state.webMcpToolCatalog.map((tool) => tool.name))
+  return promptTools
+    .filter((tool) => registeredNames.has(tool.name))
+    .map(({ name, description, inputSchema }) => ({ name, description, inputSchema, execute: '[function]' }))
+}
+
+function promptApiSettings() {
+  return {
+    availability: promptSessionOptions(),
+    create: {
+      ...promptSessionOptions(),
+      tools: promptToolRequestDefinitions(),
+      initialPrompts: [{ role: 'system', content: buildAssistantSystemPrompt(state.webMcpToolCatalog) }],
+      monitor: '[function]',
+    },
+    prompt: {
+      responseConstraint: assistantResponseConstraint,
+    },
+  }
+}
+
+function recordPromptRequest(operation: PromptApiRequest['operation'], request: Record<string, unknown>) {
+  state.promptRequests.unshift({ operation, startedAt: Date.now(), request })
+  render()
+}
+
 async function ensurePromptSession() {
   if (state.promptSessionRef) return state.promptSessionRef
   if (state.promptSessionPromise) return state.promptSessionPromise
@@ -322,7 +356,7 @@ async function ensurePromptSession() {
   const modelAlreadyDownloaded = availability === 'available'
   if (modelAlreadyDownloaded) state.promptDownloadProgress = null
 
-  state.promptSessionPromise = languageModel.create({
+  const createOptions = {
     ...options,
     initialPrompts: [{ role: 'system', content: buildAssistantSystemPrompt(state.webMcpToolCatalog) }],
     monitor: (monitor: EventTarget) => {
@@ -335,7 +369,9 @@ async function ensurePromptSession() {
         render()
       })
     },
-  }).then((session) => {
+  }
+  recordPromptRequest('create', promptApiSettings().create)
+  state.promptSessionPromise = languageModel.create(createOptions).then((session) => {
     state.promptSessionRef = session
     state.promptSessionState = 'ready'
     state.promptDownload = 'available'
@@ -376,7 +412,9 @@ function invokeTool(name: string, input: Record<string, string> = {}, source = '
 }
 
 async function runAgenticLoop(session: PromptSession, message: string) {
-  let response = await session.prompt(message, { responseConstraint: assistantResponseConstraint })
+  const promptOptions = { responseConstraint: assistantResponseConstraint }
+  recordPromptRequest('prompt', { input: message, options: promptOptions })
+  let response = await session.prompt(message, promptOptions)
   const registeredNames = new Set(state.webMcpToolCatalog.map((tool) => tool.name))
 
   for (let step = 0; step < 8; step += 1) {
@@ -391,10 +429,12 @@ async function runAgenticLoop(session: PromptSession, message: string) {
     debugLog('info', `Parsed constrained tool call ${toolCall.name}`, JSON.stringify(toolCall.input))
     const result = invokeTool(toolCall.name, toolCall.input, 'Prompt API agentic loop')
     debugLog('success', `Tool result returned to model`, `${toolCall.name}: ${result}`)
-    response = await session.prompt(`The page tool "${toolCall.name}" returned this result:
+    const followUp = `The page tool "${toolCall.name}" returned this result:
 ${result}
 
-Use this result to answer the user's original request. If another registered tool is required, return a tool_call JSON object; otherwise return a final JSON object.` , { responseConstraint: assistantResponseConstraint })
+Use this result to answer the user's original request. If another registered tool is required, return a tool_call JSON object; otherwise return a final JSON object.`
+    recordPromptRequest('prompt', { input: followUp, options: promptOptions })
+    response = await session.prompt(followUp, promptOptions)
   }
 
   throw new Error('The agentic tool loop exceeded its eight-step limit.')
@@ -482,7 +522,8 @@ function renderActivity() {
 
 function renderDebug() {
   const logs = state.debugLogs.map((entry) => `<div class="debug-log ${entry.level}"><time>${entry.time}</time><span class="log-symbol">${entry.level === 'success' ? '✓' : entry.level === 'error' ? '!' : entry.level === 'pending' ? '…' : '·'}</span><div><strong>${escapeHtml(entry.message)}</strong>${entry.detail ? `<small>${escapeHtml(entry.detail)}</small>` : ''}</div></div>`).join('')
-  return `<section class="content-inner debug-page"><div class="page-header"><div><span class="eyebrow">SYSTEM / TRACE</span><h1>Runtime trace</h1><p>Prompt API and WebMCP lifecycle events are recorded here. Tool call details live in the Audit log.</p></div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">RUNTIME LOG</span><h2>Prompt API + WebMCP events</h2></div><span class="tool-count">${state.debugLogs.length}</span></div><div class="debug-log-list">${logs || '<div class="trace-empty">Waiting for page diagnostics…</div>'}</div></div></section>`
+  const requests = state.promptRequests.map((entry) => `<details class="debug-section prompt-request"><summary><span><span class="eyebrow">PROMPT API / ${entry.operation.toUpperCase()}</span><strong>${new Date(entry.startedAt).toLocaleTimeString()} · full request</strong></span><span class="tool-count">${entry.operation}</span></summary><pre>${escapeHtml(JSON.stringify(entry.request, null, 2))}</pre></details>`).join('')
+  return `<section class="content-inner debug-page"><div class="page-header"><div><span class="eyebrow">SYSTEM / TRACE</span><h1>Runtime trace</h1><p>Prompt API and WebMCP lifecycle events are recorded here. Tool call details live in the Audit log.</p></div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">RUNTIME LOG</span><h2>Prompt API + WebMCP events</h2></div><span class="tool-count">${state.debugLogs.length}</span></div><div class="debug-log-list">${logs || '<div class="trace-empty">Waiting for page diagnostics…</div>'}</div></div><div class="section-header trace-request-heading"><div><span class="eyebrow">PROMPT API REQUESTS</span><h2>Full request payloads</h2></div><span class="tool-count">${state.promptRequests.length}</span></div>${requests || '<div class="debug-section"><div class="trace-empty">No Prompt API requests yet.</div></div>'}</section>`
 }
 
 function renderSettings() {
@@ -492,7 +533,7 @@ function renderSettings() {
   const status = (value: string, good: boolean) => `<span class="status-chip ${good ? 'good' : 'muted'}">${value}</span>`
   const downloadLabel = state.promptDownloadProgress === null ? state.promptDownload : `${state.promptDownload} ${Math.round(state.promptDownloadProgress * 100)}%`
   const progressMarkup = state.promptDownload === 'downloading' ? `<div class="download-progress"><div class="download-progress-bar" style="width:${state.promptDownloadProgress === null ? '35' : Math.round(state.promptDownloadProgress * 100)}%"></div></div>` : ''
-  return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">WORKSPACE / SETTINGS</span><h1>Local by design</h1><p>These values are deliberately visible: the page owns the data boundary.</p></div><button class="primary-button" data-action="prepare-model">↥ Prepare local model</button></div><div class="settings-grid"><div class="settings-card"><span class="eyebrow">AUTH SESSION</span><h2>${currentUser.name}</h2><p>${currentUser.role} · signed in locally</p><div class="permission-row">${currentUser.permissions.map((permission) => `<span>${permission}</span>`).join('')}</div></div><div class="settings-card"><span class="eyebrow">BROWSER CAPABILITIES</span><div class="capability"><span class="cap-dot ${state.promptMode === 'prompt-api' ? 'on' : ''}"></span><div><strong>Prompt API</strong><small>${state.promptMode === 'prompt-api' ? 'Available and active' : 'Fallback mode active'}</small></div></div><div class="capability"><span class="cap-dot ${state.webMcpMode === 'webmcp' ? 'on' : ''}"></span><div><strong>WebMCP</strong><small>${state.webMcpMode === 'webmcp' ? 'Tools registered with browser' : 'Demo registry active'}</small></div></div></div></div><div class="debug-status-grid settings-runtime"><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">WEBMCP</span>${status(state.webMcpRegistration, state.webMcpRegistration === 'complete')}</div><div class="debug-big">${state.webMcpRegisteredTools.length}<em>/ ${tools.length} tools</em></div><div class="status-line"><span>Secure context</span>${status(secure ? 'yes' : 'no', secure)}</div><div class="status-line"><span>document.modelContext</span>${status(documentContext ? 'available' : 'missing', documentContext)}</div><div class="status-line"><span>navigator.modelContext</span>${status(navigatorContext ? 'available (legacy)' : 'missing', navigatorContext)}</div><div class="status-line"><span>Registration errors</span>${status(String(state.webMcpErrors.length), state.webMcpErrors.length === 0)}</div></div><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">PROMPT API</span>${status(state.promptAvailability, state.promptApiAvailable)}</div><div class="debug-big">${state.promptSessionState}<em> session</em></div><div class="status-line"><span>LanguageModel</span>${status(state.promptApiAvailable ? 'available' : 'missing', state.promptApiAvailable)}</div><div class="status-line"><span>Model download</span>${status(downloadLabel, state.promptDownload === 'available')}</div>${progressMarkup}<div class="status-line"><span>Last model path</span>${status(state.promptMode === 'prompt-api' ? 'native response' : 'not used', state.promptMode === 'prompt-api')}</div><small class="debug-help">Availability is passive. Use “Prepare local model” or send a prompt to call LanguageModel.create() and begin downloading when needed. The session includes the page tools.</small></div></div><details class="debug-section system-prompt"><summary><span><span class="eyebrow">PROMPT API / SYSTEM PROMPT</span><strong>Show full instructions sent to the local model</strong></span><span class="tool-count">${state.webMcpToolCatalog.length} LIVE TOOLS</span></summary><pre>${escapeHtml(buildAssistantSystemPrompt(state.webMcpToolCatalog))}</pre></details><div class="architecture-note"><span>⌘</span><div><strong>No backend LLM. No API tokens.</strong><p>Tools run against the state this page already has. In a production browser with WebMCP enabled, the same registry is handed to the browser's model context API.</p></div></div></section>`
+  return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">WORKSPACE / SETTINGS</span><h1>Local by design</h1><p>These values are deliberately visible: the page owns the data boundary.</p></div><button class="primary-button" data-action="prepare-model">↥ Prepare local model</button></div><div class="settings-grid"><div class="settings-card"><span class="eyebrow">AUTH SESSION</span><h2>${currentUser.name}</h2><p>${currentUser.role} · signed in locally</p><div class="permission-row">${currentUser.permissions.map((permission) => `<span>${permission}</span>`).join('')}</div></div><div class="settings-card"><span class="eyebrow">BROWSER CAPABILITIES</span><div class="capability"><span class="cap-dot ${state.promptMode === 'prompt-api' ? 'on' : ''}"></span><div><strong>Prompt API</strong><small>${state.promptMode === 'prompt-api' ? 'Available and active' : 'Fallback mode active'}</small></div></div><div class="capability"><span class="cap-dot ${state.webMcpMode === 'webmcp' ? 'on' : ''}"></span><div><strong>WebMCP</strong><small>${state.webMcpMode === 'webmcp' ? 'Tools registered with browser' : 'Demo registry active'}</small></div></div></div></div><div class="debug-status-grid settings-runtime"><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">WEBMCP</span>${status(state.webMcpRegistration, state.webMcpRegistration === 'complete')}</div><div class="debug-big">${state.webMcpRegisteredTools.length}<em>/ ${tools.length} tools</em></div><div class="status-line"><span>Secure context</span>${status(secure ? 'yes' : 'no', secure)}</div><div class="status-line"><span>document.modelContext</span>${status(documentContext ? 'available' : 'missing', documentContext)}</div><div class="status-line"><span>navigator.modelContext</span>${status(navigatorContext ? 'available (legacy)' : 'missing', navigatorContext)}</div><div class="status-line"><span>Registration errors</span>${status(String(state.webMcpErrors.length), state.webMcpErrors.length === 0)}</div></div><div class="debug-card"><div class="debug-card-heading"><span class="eyebrow">PROMPT API</span>${status(state.promptAvailability, state.promptApiAvailable)}</div><div class="debug-big">${state.promptSessionState}<em> session</em></div><div class="status-line"><span>LanguageModel</span>${status(state.promptApiAvailable ? 'available' : 'missing', state.promptApiAvailable)}</div><div class="status-line"><span>Model download</span>${status(downloadLabel, state.promptDownload === 'available')}</div>${progressMarkup}<div class="status-line"><span>Last model path</span>${status(state.promptMode === 'prompt-api' ? 'native response' : 'not used', state.promptMode === 'prompt-api')}</div><small class="debug-help">Availability is passive. Use “Prepare local model” or send a prompt to call LanguageModel.create() and begin downloading when needed. The session includes the page tools.</small></div></div><details class="debug-section system-prompt" open><summary><span><span class="eyebrow">PROMPT API / PARAMETERS</span><strong>Show all parameters configured for the Prompt API</strong></span><span class="tool-count">${state.webMcpToolCatalog.length} LIVE TOOLS</span></summary><pre>${escapeHtml(JSON.stringify(promptApiSettings(), null, 2))}</pre></details><div class="architecture-note"><span>⌘</span><div><strong>No backend LLM. No API tokens.</strong><p>Tools run against the state this page already has. In a production browser with WebMCP enabled, the same registry is handed to the browser's model context API.</p></div></div></section>`
 }
 
 function bindEvents() {
