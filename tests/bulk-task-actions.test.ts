@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { applyBulkTaskStatus, getBulkTaskStatus, getRequestedTaskMutationFields, parseSearchMatches } from '../src/bulk-task-actions'
+import { applyBulkTaskStatus, getBulkTaskStatus, getRequestedTaskMutationFields, hasSuccessfulTaskMutation, parseSearchMatches } from '../src/bulk-task-actions'
 
 describe('bulk task actions', () => {
   it('distinguishes priority and status mutation requests', () => {
     expect([...getRequestedTaskMutationFields('Set customer demo priority to low')]).toEqual(['priority'])
     expect([...getRequestedTaskMutationFields('Set customer demo status to done')]).toEqual(['status'])
     expect([...getRequestedTaskMutationFields('Set customer demo status to done and priority to low')]).toEqual(['status', 'priority'])
+  })
+
+  it('only recognizes an executed mutation result, not a search result or error', () => {
+    expect(hasSuccessfulTaskMutation(JSON.stringify({ matches: [{ id: 't-5', priority: 'Medium' }] }), 'priority')).toBe(false)
+    expect(hasSuccessfulTaskMutation(JSON.stringify({ error: 'Task not found' }), 'priority')).toBe(false)
+    expect(hasSuccessfulTaskMutation(JSON.stringify({ id: 't-5', status: 'In progress', priority: 'Low' }), 'priority')).toBe(true)
   })
 
   it('extracts the requested status from an all-tasks command', () => {

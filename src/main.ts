@@ -5,7 +5,7 @@ import { mergeDownloadProgress } from './prompt-download'
 import { isUnknownPromptApiError, PROMPT_API_RETRY_LIMIT } from './prompt-retry'
 import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskPriority, setProjectTaskStatus } from './mock-api'
 import { normalizeTaskPriority, normalizeTaskStatus, TASK_PRIORITIES, TASK_STATUSES, type Task } from './task-data'
-import { applyBulkTaskStatus, getBulkTaskStatus, getRequestedTaskMutationFields, parseSearchMatches } from './bulk-task-actions'
+import { applyBulkTaskStatus, getBulkTaskStatus, getRequestedTaskMutationFields, hasSuccessfulTaskMutation, parseSearchMatches } from './bulk-task-actions'
 import { assistantResponseConstraint, normalizeToolInput, parseAssistantResponse, validateToolInput } from './tool-protocol'
 import { createAppState, type AppState, type ChatMessage, type DebugLevel, type LocalTool, type PromptApiRequest, type PromptLanguageModel, type PromptSession, type Scene, type ToolCall, type ToolDetails, type WebMcpContext } from './app-types'
 import { render as renderView } from './render'
@@ -289,10 +289,23 @@ async function runAgenticLoop(session: PromptSession, message: string) {
   recordPromptResponse(initialRequest, response)
   const registeredNames = new Set(state.webMcpToolCatalog.map((tool) => tool.name))
   const bulkUpdates = new Map<string, Record<string, unknown>>()
+  const requestedFields = getRequestedTaskMutationFields(message)
+  const requestedMutationField = requestedFields.size === 1 ? [...requestedFields][0] : undefined
+  const completedMutationFields = new Set<string>()
 
   for (let step = 0; step < 8; step += 1) {
     const parsed = parseAssistantResponse(response)
-    if (parsed.kind === 'final') return parsed.answer
+    if (parsed.kind === 'final') {
+      if (!requestedMutationField || completedMutationFields.has(requestedMutationField)) return parsed.answer
+      const requiredTool = `set_task_${requestedMutationField}`
+      const followUp = `You have not completed the user's requested ${requestedMutationField} change. Do not provide a final answer yet. You must call ${requiredTool} with the exact taskId and requested ${requestedMutationField}, then use that tool's returned task data.`
+      debugLog('error', 'Blocked final response before required mutation', `No successful ${requiredTool} call was recorded.`)
+      const followUpRequest = recordPromptRequest('prompt', { input: followUp, options: promptOptions })
+      response = await session.prompt(followUp, promptOptions)
+      if (isUnknownPromptApiError(response)) throw new Error(response)
+      recordPromptResponse(followUpRequest, response)
+      continue
+    }
     const toolCall = parsed.toolCall
     if (!registeredNames.has(toolCall.name)) {
       debugLog('error', 'Model requested an unregistered tool', toolCall.name)
@@ -300,8 +313,6 @@ async function runAgenticLoop(session: PromptSession, message: string) {
     }
 
     debugLog('info', `Parsed constrained tool call ${toolCall.name}`, JSON.stringify(toolCall.input))
-    const requestedFields = getRequestedTaskMutationFields(message)
-    const requestedMutationField = requestedFields.size === 1 ? [...requestedFields][0] : undefined
     const calledMutationField = toolCall.name === 'set_task_status' ? 'status' : toolCall.name === 'set_task_priority' ? 'priority' : undefined
     let result: string
     if (requestedMutationField && calledMutationField && requestedMutationField !== calledMutationField) {
@@ -353,6 +364,9 @@ async function runAgenticLoop(session: PromptSession, message: string) {
       } else if (toolCall.name === 'search_tasks') {
         recentSearchMatches = parseSearchMatches(result)
       }
+    }
+    if (calledMutationField && hasSuccessfulTaskMutation(result, calledMutationField)) {
+      completedMutationFields.add(calledMutationField)
     }
     debugLog('success', `Tool result returned to model`, `${toolCall.name}: ${result}`)
     const followUp = `The page tool "${toolCall.name}" returned this result:

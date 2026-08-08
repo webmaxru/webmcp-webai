@@ -9,6 +9,29 @@ export function getRequestedTaskMutationFields(message: string): Set<TaskMutatio
   return fields
 }
 
+export function hasSuccessfulTaskMutation(result: string, field: TaskMutationField): boolean {
+  try {
+    const parsed: unknown = JSON.parse(result)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false
+    const value = parsed as Record<string, unknown>
+    if ('error' in value) return false
+    if (field in value && typeof value[field] === 'string' && typeof value.id === 'string') return true
+    const updates = value.updates
+    return Array.isArray(updates) && updates.some((update) => (
+      Boolean(update) &&
+      typeof update === 'object' &&
+      !Array.isArray(update) &&
+      !('error' in update) &&
+      field in update &&
+      typeof update[field] === 'string' &&
+      'id' in update &&
+      typeof update.id === 'string'
+    ))
+  } catch {
+    return false
+  }
+}
+
 export function getBulkTaskStatus(message: string, hasPriorSearchMatches = false): TaskStatus | undefined {
   const refersToPriorMatches = hasPriorSearchMatches && /\b(their|those|these|matching|found)\b/i.test(message)
   if (!/\ball\b/i.test(message) && !refersToPriorMatches) return undefined
