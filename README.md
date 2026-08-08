@@ -17,6 +17,10 @@ For Chrome preview testing, use a supported Chrome build, enable the Prompt API/
 
 The portable web-page Prompt API does not provide a supported `temperature` control. `temperature`, `topK`, and `LanguageModel.params()` are experimental and extension-only, so this demo does not depend on them. Instead, it makes responses more predictable by using fixed system instructions, explicit response-format requirements, stable tool definitions and context, and `responseConstraint` JSON Schema where structured output is required. These techniques reduce variation but do not guarantee identical output across browsers, model versions, or runs.
 
+### Prompt API `kErrorUnknown` retry
+
+Some browser Prompt API builds occasionally return `kErrorUnknown` with `The agentic tool loop could not complete this request`. This is an undocumented browser/model error and does not identify whether the failure came from model availability, context pressure, tool execution, or a browser implementation issue. The app detects this exact error and retries the request once with a fresh Prompt API session. Other errors are surfaced without retrying, and the runtime trace records the retry and final outcome.
+
 ## Suggested talk flow
 
 1. Start on **Overview** and point out that tasks, permissions, and health are already in page memory.
