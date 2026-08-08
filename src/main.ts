@@ -1,6 +1,7 @@
 import './style.css'
 import assistantSystemPromptTemplate from './assistant-system-prompt.md?raw'
 import conversationStarters from './conversation-starters.json'
+import toolDescriptions from './data/tool-descriptions.json'
 import { mergeDownloadProgress } from './prompt-download'
 import { isUnknownPromptApiError, PROMPT_API_RETRY_LIMIT } from './prompt-retry'
 import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskStatus } from './mock-api'
@@ -109,25 +110,25 @@ function debugLog(level: DebugLevel, message: string, detail?: string) {
 const tools: LocalTool[] = [
   {
     name: 'get_project_summary',
-    description: 'Read the project health, task counts, and launch context from page-local state.',
+    description: toolDescriptions.get_project_summary,
     input: '{}',
     run: () => JSON.stringify({ project: project.name, health: project.health, tasks: project.tasks.length, inProgress: project.tasks.filter((task) => task.status === 'In progress').length }),
   },
   {
     name: 'search_tasks',
-    description: 'Search or resolve tasks already loaded in this page by title, owner, priority, or status. Use the returned matches to identify an exact task before changing its status.',
+    description: toolDescriptions.search_tasks,
     input: '{ "query": "string" }',
     run: ({ query = '' }) => JSON.stringify({ matches: searchProjectTasks(query) }),
   },
   {
     name: 'get_current_user',
-    description: 'Read the signed-in user and permissions from the local session state.',
+    description: toolDescriptions.get_current_user,
     input: '{}',
     run: () => JSON.stringify({ ...currentUser, source: 'local session' }),
   },
   {
     name: 'set_task_status',
-    description: 'Update a task status in the page-local workspace and return the updated task.',
+    description: toolDescriptions.set_task_status,
     input: '{ "taskId": "t-1", "status": "Done" }',
     run: ({ taskId = '', status = 'Todo' }) => {
       const normalizedStatus = normalizeTaskStatus(status)

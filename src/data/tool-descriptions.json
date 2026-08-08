@@ -1,0 +1,6 @@
+{
+  "get_project_summary": "Read the project health, task counts, and launch context from page-local state.",
+  "search_tasks": "Search or resolve tasks already loaded in this page by title, owner, priority, or status. Use the returned matches to identify an exact task before changing its status.",
+  "get_current_user": "Read the signed-in user and permissions from the local session state.",
+  "set_task_status": "Update a task status in the page-local workspace and return the updated task."
+}
