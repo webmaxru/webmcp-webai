@@ -1,25 +1,9 @@
 import './style.css'
 import { mergeDownloadProgress } from './prompt-download'
+import { project, searchTasks, TASK_STATUSES, updateTaskStatus, type Task, type TaskStatus } from './task-data'
 
 type Scene = 'overview' | 'activity' | 'settings' | 'debug'
-type TaskStatus = 'Todo' | 'In progress' | 'Done'
 type DebugLevel = 'info' | 'success' | 'error' | 'pending'
-
-interface Task {
-  id: string
-  title: string
-  owner: string
-  status: TaskStatus
-  priority: 'High' | 'Medium' | 'Low'
-  due: string
-}
-
-interface Project {
-  name: string
-  description: string
-  health: 'On track' | 'At risk'
-  tasks: Task[]
-}
 
 interface ToolCall {
   id: number
@@ -71,19 +55,6 @@ interface ParsedToolCall {
   input: Record<string, string>
 }
 
-const project: Project = {
-  name: 'Atlas launch',
-  description: 'A client-side project workspace. The page owns the data, state, and tools.',
-  health: 'On track',
-  tasks: [
-    { id: 't-1', title: 'Finalize onboarding flow', owner: 'Maya', status: 'In progress', priority: 'High', due: 'Today' },
-    { id: 't-2', title: 'Review usage analytics', owner: 'Noah', status: 'Todo', priority: 'Medium', due: 'Tomorrow' },
-    { id: 't-3', title: 'Publish release notes', owner: 'Maya', status: 'Done', priority: 'Low', due: 'Aug 09' },
-    { id: 't-4', title: 'Run accessibility audit', owner: 'Iris', status: 'Todo', priority: 'High', due: 'Aug 10' },
-    { id: 't-5', title: 'Prepare customer demo', owner: 'Noah', status: 'In progress', priority: 'Medium', due: 'Aug 12' },
-  ],
-}
-
 const conversationStarters = [
   { label: 'Project health', prompt: 'What is the project health?' },
   { label: 'High priority tasks', prompt: 'Find high priority tasks' },
@@ -132,7 +103,7 @@ const tools: LocalTool[] = [
     name: 'search_tasks',
     description: 'Search the tasks already loaded in this page by title, owner, priority, or status.',
     input: '{ "query": "string" }',
-    run: ({ query = '' }) => JSON.stringify(project.tasks.filter((task) => Object.values(task).some((value) => value.toLowerCase().includes(query.toLowerCase())))),
+    run: ({ query = '' }) => JSON.stringify(searchTasks(query, project.tasks)),
   },
   {
     name: 'get_current_user',
@@ -145,9 +116,9 @@ const tools: LocalTool[] = [
     description: 'Update a task status in the page-local workspace and return the updated task.',
     input: '{ "taskId": "t-1", "status": "Done" }',
     run: ({ taskId = '', status = 'Todo' }) => {
-      const task = project.tasks.find((candidate) => candidate.id === taskId)
-      if (!task || !['Todo', 'In progress', 'Done'].includes(status)) return JSON.stringify({ error: 'Task or status not found' })
-      task.status = status as TaskStatus
+      if (!TASK_STATUSES.includes(status as TaskStatus)) return JSON.stringify({ error: `Invalid status. Use one of: ${TASK_STATUSES.join(', ')}` })
+      const task = updateTaskStatus(taskId, status as TaskStatus, project.tasks)
+      if (!task) return JSON.stringify({ error: 'Task not found' })
       render()
       return JSON.stringify(task)
     },
