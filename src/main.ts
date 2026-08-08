@@ -59,25 +59,13 @@ interface ParsedToolCall {
 const assistantResponseConstraint = {
   type: 'object',
   additionalProperties: false,
-  oneOf: [
-    {
-      type: 'object',
-      properties: {
-        kind: { const: 'tool_call' },
-        tool: { type: 'string', enum: ['find_task', 'get_project_summary', 'search_tasks', 'get_current_user', 'set_task_status'] },
-        arguments: { type: 'object', additionalProperties: { type: 'string' } },
-      },
-      required: ['kind', 'tool', 'arguments'],
-    },
-    {
-      type: 'object',
-      properties: {
-        kind: { const: 'final' },
-        answer: { type: 'string' },
-      },
-      required: ['kind', 'answer'],
-    },
-  ],
+  properties: {
+    kind: { type: 'string', enum: ['tool_call', 'final'] },
+    tool: { type: 'string', enum: ['find_task', 'get_project_summary', 'search_tasks', 'get_current_user', 'set_task_status'] },
+    arguments: { type: 'object', additionalProperties: { type: 'string' } },
+    answer: { type: 'string' },
+  },
+  required: ['kind'],
 }
 
 const state = {
