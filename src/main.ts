@@ -1,7 +1,12 @@
 import './style.css'
 import conversationStarters from './conversation-starters.json'
 import { mergeDownloadProgress } from './prompt-download'
-import { normalizeTaskStatus, project, searchTasks, TASK_STATUSES, updateTaskStatus, type Task } from './task-data'
+import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskStatus } from './mock-api'
+import { normalizeTaskStatus, TASK_STATUSES, type Task } from './task-data'
+
+const appData = getAppData()
+const currentUser = getCurrentUser()
+const project = getProject()
 
 type Scene = 'overview' | 'activity' | 'settings' | 'debug'
 type DebugLevel = 'info' | 'success' | 'error' | 'pending'
@@ -104,7 +109,7 @@ const tools: LocalTool[] = [
     name: 'find_task',
     description: 'Resolve a natural-language task description to the exact loaded task ID. Use before changing status when the user did not provide an exact ID.',
     input: '{ "query": "accessibility task" }',
-    run: ({ query = '' }) => JSON.stringify({ matches: searchTasks(query, project.tasks) }),
+    run: ({ query = '' }) => JSON.stringify({ matches: searchProjectTasks(query) }),
   },
   {
     name: 'get_project_summary',
@@ -116,13 +121,13 @@ const tools: LocalTool[] = [
     name: 'search_tasks',
     description: 'Search the tasks already loaded in this page by title, owner, priority, or status.',
     input: '{ "query": "string" }',
-    run: ({ query = '' }) => JSON.stringify(searchTasks(query, project.tasks)),
+    run: ({ query = '' }) => JSON.stringify(searchProjectTasks(query)),
   },
   {
     name: 'get_current_user',
     description: 'Read the signed-in user and permissions from the local session state.',
     input: '{}',
-    run: () => JSON.stringify({ name: 'Jordan Lee', role: 'Product lead', permissions: ['read:project', 'update:tasks'], source: 'local session' }),
+    run: () => JSON.stringify({ ...currentUser, source: 'local session' }),
   },
   {
     name: 'set_task_status',
@@ -131,7 +136,7 @@ const tools: LocalTool[] = [
     run: ({ taskId = '', status = 'Todo' }) => {
       const normalizedStatus = normalizeTaskStatus(status)
       if (!normalizedStatus) return JSON.stringify({ error: `Invalid status. Use one of: ${TASK_STATUSES.join(', ')}` })
-      const task = updateTaskStatus(taskId, normalizedStatus, project.tasks)
+      const task = setProjectTaskStatus(taskId, normalizedStatus)
       if (!task) return JSON.stringify({ error: 'Task not found' })
       render()
       return JSON.stringify(task)
@@ -166,7 +171,7 @@ function buildAssistantSystemPrompt(toolCatalog: WebMcpTool[]) {
     ? toolCatalog.map((tool) => `- ${tool.name}: ${tool.description} Input schema: ${JSON.stringify(tool.inputSchema ?? {})}`).join('\n')
     : '- No WebMCP tools are currently registered. Do not answer workspace-state questions from memory.'
 
-  return `You are Atlas Workspace Assistant, an on-device assistant for the project workspace shown in this browser tab.
+  return `You are the ${project.name} Workspace Assistant, an on-device assistant for the project workspace shown in this browser tab.
 
 MISSION
 - Answer questions about the currently loaded Atlas launch project, its tasks, and the signed-in user.
@@ -440,7 +445,7 @@ function render() {
     <div class="app-shell">
       <header class="topbar"><div class="brand"><span class="brand-mark">✦</span><span>WEB<span class="brand-muted">MCP</span></span><span class="brand-divider">/</span><span class="brand-context">ATLAS WORKSPACE</span></div><div class="top-actions"><span class="live-pill"><i></i> LOCAL-FIRST</span><button class="avatar" aria-label="Open user settings">JL</button></div></header>
       <div class="layout">
-        <aside class="sidebar"><div class="side-label">WORKSPACE</div><button class="nav-item ${state.scene === 'overview' ? 'active' : ''}" data-scene="overview"><span>▦</span> Overview</button><button class="nav-item ${state.scene === 'activity' ? 'active' : ''}" data-scene="activity"><span>↗</span> Activity <b>12</b></button><button class="nav-item ${state.scene === 'debug' ? 'active' : ''}" data-scene="debug"><span>⌘</span> Debug</button><button class="nav-item ${state.scene === 'settings' ? 'active' : ''}" data-scene="settings"><span>⚙</span> Settings</button><div class="sidebar-spacer"></div><div class="connection-card"><span class="connection-icon">◉</span><div><strong>Page tools online</strong><small>${tools.length} tools · no backend</small></div></div><div class="user-card"><span class="avatar small">JL</span><div><strong>Jordan Lee</strong><small>Product lead</small></div><span>⌄</span></div></aside>
+        <aside class="sidebar"><div class="side-label">WORKSPACE</div><button class="nav-item ${state.scene === 'overview' ? 'active' : ''}" data-scene="overview"><span>▦</span> Overview</button><button class="nav-item ${state.scene === 'activity' ? 'active' : ''}" data-scene="activity"><span>↗</span> Activity <b>${appData.activityCount}</b></button><button class="nav-item ${state.scene === 'debug' ? 'active' : ''}" data-scene="debug"><span>⌘</span> Debug</button><button class="nav-item ${state.scene === 'settings' ? 'active' : ''}" data-scene="settings"><span>⚙</span> Settings</button><div class="sidebar-spacer"></div><div class="connection-card"><span class="connection-icon">◉</span><div><strong>Page tools online</strong><small>${tools.length} tools · no backend</small></div></div><div class="user-card"><span class="avatar small">${currentUser.initials}</span><div><strong>${currentUser.name}</strong><small>${currentUser.role}</small></div><span>⌄</span></div></aside>
         <main class="main-content">${state.scene === 'settings' ? renderSettings() : state.scene === 'activity' ? renderActivity() : state.scene === 'debug' ? renderDebug() : renderOverview(filteredTasks)}</main>
         <aside class="agent-panel"><div class="agent-heading"><div><span class="eyebrow">ON-DEVICE ASSISTANT</span><h2>Ask the workspace</h2></div><div class="agent-actions"><button class="restart-button" type="button" data-action="restart-conversation">Restart conversation</button><span class="model-badge">${state.promptMode === 'prompt-api' ? 'PROMPT API' : 'DEMO MODEL'}</span></div></div><p class="agent-description">The model can discover and call tools exposed by this page. Nothing leaves your browser.</p><div class="chat-log">${chat || `<div class="empty-chat"><span>✦</span><p>Try asking:</p><div class="empty-starters" aria-label="Conversation starters">${emptyStarterButtons}</div></div>`}</div><form class="chat-form" id="chat-form"><input id="chat-input" aria-label="Ask the local model" placeholder="Ask about this workspace…" autocomplete="off"><button aria-label="Send message">↗</button></form><div class="conversation-starters" aria-label="Conversation starters">${starterButtons}</div></aside>
       </div>
@@ -450,7 +455,7 @@ function render() {
 
 function renderOverview(tasks: Task[]) {
   const inProgress = project.tasks.filter((task) => task.status === 'In progress').length
-  return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">PROJECT / 08 AUG 2026</span><h1>Good morning, Jordan <span class="wave">⌁</span></h1><p>${project.description}</p></div><button class="primary-button" data-demo="summary">✦ Ask the assistant</button></div><div class="metric-grid"><div class="metric-card"><span class="metric-label">PROJECT HEALTH</span><strong class="metric-value health"><i></i>${project.health}</strong><small>Based on current delivery signals</small></div><div class="metric-card"><span class="metric-label">OPEN TASKS</span><strong class="metric-value">${project.tasks.filter((task) => task.status !== 'Done').length}<em>/ ${project.tasks.length}</em></strong><small>${inProgress} in progress right now</small></div><div class="metric-card"><span class="metric-label">NEXT MILESTONE</span><strong class="metric-value date">AUG 16</strong><small>Public beta launch</small></div></div><div class="section-header"><div><span class="eyebrow">LIVE WORKBOARD</span><h2>Tasks</h2></div><div class="filter-tabs">${['All', 'Todo', 'In progress', 'Done'].map((filter) => `<button class="${state.filter === filter ? 'selected' : ''}" data-filter="${filter}">${filter}</button>`).join('')}</div></div><div class="task-list">${tasks.map(renderTask).join('')}</div></section>`
+  return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">PROJECT / ${appData.dateLabel}</span><h1>Good morning, ${escapeHtml(currentUser.name.split(' ')[0])} <span class="wave">⌁</span></h1><p>${project.description}</p></div><button class="primary-button" data-demo="summary">✦ Ask the assistant</button></div><div class="metric-grid"><div class="metric-card"><span class="metric-label">PROJECT HEALTH</span><strong class="metric-value health"><i></i>${project.health}</strong><small>Based on current delivery signals</small></div><div class="metric-card"><span class="metric-label">OPEN TASKS</span><strong class="metric-value">${project.tasks.filter((task) => task.status !== 'Done').length}<em>/ ${project.tasks.length}</em></strong><small>${inProgress} in progress right now</small></div><div class="metric-card"><span class="metric-label">NEXT MILESTONE</span><strong class="metric-value date">${appData.nextMilestone}</strong><small>${appData.nextMilestoneLabel}</small></div></div><div class="section-header"><div><span class="eyebrow">LIVE WORKBOARD</span><h2>Tasks</h2></div><div class="filter-tabs">${['All', 'Todo', 'In progress', 'Done'].map((filter) => `<button class="${state.filter === filter ? 'selected' : ''}" data-filter="${filter}">${filter}</button>`).join('')}</div></div><div class="task-list">${tasks.map(renderTask).join('')}</div></section>`
 }
 
 function renderActivity() {
@@ -470,7 +475,7 @@ function renderDebug() {
 }
 
 function renderSettings() {
-  return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">WORKSPACE / SETTINGS</span><h1>Local by design</h1><p>These values are deliberately visible: the page owns the data boundary.</p></div></div><div class="settings-grid"><div class="settings-card"><span class="eyebrow">AUTH SESSION</span><h2>Jordan Lee</h2><p>Product lead · signed in locally</p><div class="permission-row"><span>read:project</span><span>update:tasks</span></div></div><div class="settings-card"><span class="eyebrow">BROWSER CAPABILITIES</span><div class="capability"><span class="cap-dot ${state.promptMode === 'prompt-api' ? 'on' : ''}"></span><div><strong>Prompt API</strong><small>${state.promptMode === 'prompt-api' ? 'Available and active' : 'Fallback mode active'}</small></div></div><div class="capability"><span class="cap-dot ${state.webMcpMode === 'webmcp' ? 'on' : ''}"></span><div><strong>WebMCP</strong><small>${state.webMcpMode === 'webmcp' ? 'Tools registered with browser' : 'Demo registry active'}</small></div></div></div></div><div class="architecture-note"><span>⌘</span><div><strong>No backend LLM. No API tokens.</strong><p>Tools run against the state this page already has. In a production browser with WebMCP enabled, the same registry is handed to the browser's model context API.</p></div></div></section>`
+  return `<section class="content-inner"><div class="page-header"><div><span class="eyebrow">WORKSPACE / SETTINGS</span><h1>Local by design</h1><p>These values are deliberately visible: the page owns the data boundary.</p></div></div><div class="settings-grid"><div class="settings-card"><span class="eyebrow">AUTH SESSION</span><h2>${currentUser.name}</h2><p>${currentUser.role} · signed in locally</p><div class="permission-row">${currentUser.permissions.map((permission) => `<span>${permission}</span>`).join('')}</div></div><div class="settings-card"><span class="eyebrow">BROWSER CAPABILITIES</span><div class="capability"><span class="cap-dot ${state.promptMode === 'prompt-api' ? 'on' : ''}"></span><div><strong>Prompt API</strong><small>${state.promptMode === 'prompt-api' ? 'Available and active' : 'Fallback mode active'}</small></div></div><div class="capability"><span class="cap-dot ${state.webMcpMode === 'webmcp' ? 'on' : ''}"></span><div><strong>WebMCP</strong><small>${state.webMcpMode === 'webmcp' ? 'Tools registered with browser' : 'Demo registry active'}</small></div></div></div></div><div class="architecture-note"><span>⌘</span><div><strong>No backend LLM. No API tokens.</strong><p>Tools run against the state this page already has. In a production browser with WebMCP enabled, the same registry is handed to the browser's model context API.</p></div></div></section>`
 }
 
 function bindEvents() {

@@ -1,3 +1,5 @@
+import workspaceData from './data/workspace.json'
+
 export const TASK_STATUSES = ['Todo', 'In progress', 'Done'] as const
 export type TaskStatus = typeof TASK_STATUSES[number]
 
@@ -25,18 +27,12 @@ export interface Project {
   tasks: Task[]
 }
 
-export const tasks: Task[] = [
-  { id: 't-1', title: 'Finalize onboarding flow', owner: 'Maya', status: 'In progress', priority: 'High', due: 'Today' },
-  { id: 't-2', title: 'Review usage analytics', owner: 'Noah', status: 'Todo', priority: 'Medium', due: 'Tomorrow' },
-  { id: 't-3', title: 'Publish release notes', owner: 'Maya', status: 'Done', priority: 'Low', due: 'Aug 09' },
-  { id: 't-4', title: 'Run accessibility audit', owner: 'Iris', status: 'Todo', priority: 'High', due: 'Aug 10' },
-  { id: 't-5', title: 'Prepare customer demo', owner: 'Noah', status: 'In progress', priority: 'Medium', due: 'Aug 12' },
-]
+export const tasks: Task[] = structuredClone(workspaceData.tasks) as Task[]
 
 export const project: Project = {
-  name: 'Atlas launch',
-  description: 'A client-side project workspace. The page owns the data, state, and tools.',
-  health: 'On track',
+  name: workspaceData.name,
+  description: workspaceData.description,
+  health: workspaceData.health as Project['health'],
   tasks,
 }
 

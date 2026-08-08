@@ -1,0 +1,6 @@
+{
+  "name": "Jordan Lee",
+  "role": "Product lead",
+  "initials": "JL",
+  "permissions": ["read:project", "update:tasks"]
+}

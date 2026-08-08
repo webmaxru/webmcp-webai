@@ -24,4 +24,4 @@ For Chrome preview testing, use a supported Chrome build, enable the Prompt API/
 
 ## Architecture
 
-`src/main.ts` contains the deliberately small vertical slice: typed local state, real WebMCP registration, a native `LanguageModel.availability()`/`create()` session wrapper with tool-enabled prompts and download monitoring, and the UI. The tool trace is intentionally visible so the demo makes the data boundary clear instead of hiding it inside a chat component.
+`src/data/` contains the sample workspace, user, application metadata, and conversation starters as JSON fixtures. `src/mock-api.ts` is the shared mock API boundary: the UI reads its project, user, and display metadata through it, while the Prompt API and WebMCP tools use the same boundary for searches and task updates. `src/main.ts` contains the WebMCP registration, native `LanguageModel.availability()`/`create()` session wrapper, and UI. The tool trace is intentionally visible so the demo makes the data boundary clear instead of hiding it inside a chat component.
