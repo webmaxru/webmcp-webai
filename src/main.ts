@@ -59,6 +59,7 @@ const conversationStarters = [
   { label: 'Project health', prompt: 'What is the project health?' },
   { label: 'High priority tasks', prompt: 'Find high priority tasks' },
   { label: 'Signed-in user', prompt: 'Who am I signed in as?' },
+  { label: 'Update accessibility status', prompt: 'Set status of accessibility project to in progress' },
 ]
 
 const state = {
@@ -423,7 +424,7 @@ function render() {
   const filteredTasks = state.filter === 'All' ? project.tasks : project.tasks.filter((task) => task.status === state.filter)
   const chat = state.chat.map((message) => `<div class="chat-message ${message.role}"><span class="chat-label">${message.role === 'user' ? 'YOU' : 'LOCAL MODEL'}</span><p>${escapeHtml(message.text).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p></div>`).join('')
   const starterButtons = conversationStarters.map((starter) => `<button class="starter-pill" type="button" data-prompt="${escapeHtml(starter.prompt)}" title="${escapeHtml(starter.prompt)}">${escapeHtml(starter.label)}</button>`).join('')
-  const emptyStarterButtons = conversationStarters.map((starter) => `<button class="starter-pill" type="button" data-prompt-submit="${escapeHtml(starter.prompt)}" title="${escapeHtml(starter.prompt)}">${escapeHtml(starter.label)}</button>`).join('')
+  const emptyStarterButtons = conversationStarters.map((starter) => `<button class="starter-pill" type="button" data-prompt-submit="${escapeHtml(starter.prompt)}" title="${escapeHtml(starter.prompt)}">${escapeHtml(starter.prompt)}</button>`).join('')
   document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="app-shell">
       <header class="topbar"><div class="brand"><span class="brand-mark">✦</span><span>WEB<span class="brand-muted">MCP</span></span><span class="brand-divider">/</span><span class="brand-context">ATLAS WORKSPACE</span></div><div class="top-actions"><span class="live-pill"><i></i> LOCAL-FIRST</span><button class="avatar" aria-label="Open user settings">JL</button></div></header>
