@@ -19,6 +19,10 @@ describe('task data', () => {
     expect(searchTasks('high priority').map((task) => task.id)).toEqual(['t-1', 't-4'])
   })
 
+  it('matches a task when any query word appears in its fields', () => {
+    expect(searchTasks('Maya audit').map((task) => task.id)).toEqual(['t-1', 't-3', 't-4'])
+  })
+
   it('updates a task in the selected collection', () => {
     const source = [{ ...tasks[0] }]
 

@@ -55,7 +55,7 @@ export function searchTasks(query: string, source: Task[] = tasks): Task[] {
   const terms = normalizedQuery.split(/\s+/)
   return source.filter((task) => {
     const searchableText = Object.values(task).join(' ').toLowerCase()
-    return terms.every((term) => searchableText.includes(term))
+    return terms.some((term) => searchableText.includes(term))
   })
 }
 
