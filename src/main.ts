@@ -162,10 +162,15 @@ TOOL USE IS REQUIRED
 - Before answering any question about project health, task counts, task details, task search results, the signed-in user, or permissions, call the relevant page tool.
 - If a request could be answered from workspace state, prefer a tool call over a general-knowledge answer.
 - For a task search, call search_tasks with the user's words as the query. Do not silently narrow, rewrite, or invent filters.
-- For a status change, call set_task_status with the exact task id and one of the allowed statuses: "Todo", "In progress", or "Done".
-- After a mutating tool call, use its returned task as the authoritative result and clearly state whether the update succeeded.
-- If the user did not provide enough information for a mutation, ask for the missing task id or status instead of guessing.
 - If a tool returns an error or no matching data, report that plainly and do not produce a success-shaped answer.
+
+TOOL CHAINING
+- Treat the user's request as a workflow, not necessarily a single tool call.
+- Determine which tool results are prerequisites for later tool calls. Call prerequisite tools first, then use their returned values exactly in dependent calls.
+- Continue chaining registered tools until the user's request is fully resolved. Do not answer early when another tool call is required.
+- Never invent identifiers, arguments, or results. If a prerequisite returns no match, conflicting matches, or insufficient information, stop and ask for clarification or report the failure.
+- After a mutating tool call, use its returned data as the authoritative result and clearly state whether the operation succeeded.
+- If a tool returns an error, stop the dependent workflow and report that error plainly; do not produce a success-shaped answer.
 
 LIVE WEBMCP TOOLS
 The following catalog was read from the page's WebMCP model context after registration. Use these exact names and schemas:
@@ -351,32 +356,13 @@ function parseToolInput(source: string, name: string): Record<string, string> {
   }
 }
 
-function requiredToolInstruction(message: string) {
-  const normalized = message.toLowerCase()
-  if (normalized.includes('high priority')) return 'tool_code search_tasks {"query":"high priority"}'
-  if (normalized.includes('project health') || normalized.includes('project status')) return 'tool_code get_project_summary {}'
-  if (normalized.includes('signed in') || normalized.includes('logged in') || normalized.includes('current user')) return 'tool_code get_current_user {}'
-  return null
-}
-
 async function runAgenticLoop(session: PromptSession, message: string) {
   let response = await session.prompt(message)
   const registeredNames = new Set(state.webMcpToolCatalog.map((tool) => tool.name))
-  let correctionAttempted = false
 
-  for (let step = 0; step < 4; step += 1) {
+  for (let step = 0; step < 8; step += 1) {
     const toolCall = parseToolCall(response)
-    if (!toolCall) {
-      const requiredTool = requiredToolInstruction(message)
-      if (requiredTool && !correctionAttempted) {
-        correctionAttempted = true
-        debugLog('pending', 'Model answered without using a required workspace tool', `Requesting ${requiredTool}`)
-        response = await session.prompt(`Do not answer from memory. This request requires a live page-tool result. Emit exactly this tool call on its own line, with no Markdown fences or punctuation:
-${requiredTool}`)
-        continue
-      }
-      return response
-    }
+    if (!toolCall) return response
     if (!registeredNames.has(toolCall.name)) {
       debugLog('error', 'Model requested an unregistered tool', toolCall.name)
       throw new Error(`The model requested "${toolCall.name}", but that tool is not registered on this page.`)
@@ -391,7 +377,7 @@ ${result}
 Use this result to answer the user's original request. If another registered tool is required, emit exactly one tool_code line; otherwise provide the final answer.`)
   }
 
-  throw new Error('The agentic tool loop exceeded its four-step limit.')
+  throw new Error('The agentic tool loop exceeded its eight-step limit.')
 }
 
 async function askAgent(message: string) {
