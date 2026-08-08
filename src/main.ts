@@ -291,6 +291,8 @@ async function ensurePromptSession() {
   const availability = languageModel.availability ? await languageModel.availability(options) : 'unknown'
   state.promptAvailability = availability
   if (availability === 'unavailable') throw new Error('Prompt API reports this text-and-tools session as unavailable.')
+  const modelAlreadyDownloaded = availability === 'available'
+  if (modelAlreadyDownloaded) state.promptDownloadProgress = null
 
   state.promptSessionPromise = languageModel.create({
     ...options,
@@ -298,6 +300,7 @@ async function ensurePromptSession() {
     monitor: (monitor: EventTarget) => {
       debugLog('pending', 'Local model download started or is continuing')
       monitor.addEventListener('downloadprogress', (event) => {
+        if (modelAlreadyDownloaded) return
         const progress = event as Event & { loaded?: number; total?: number }
         state.promptDownloadProgress = mergeDownloadProgress(state.promptDownloadProgress, progress.loaded, progress.total)
         state.promptDownload = 'downloading'
