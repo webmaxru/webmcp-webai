@@ -29,7 +29,7 @@
   {
     "name": "search_tasks",
     "title": "Search tasks",
-    "description": "Search or resolve tasks already loaded in this page by title, owner, priority, or status. Use the returned matches to identify an exact task before changing its status.",
+    "description": "Search or resolve tasks already loaded in this page by title, owner, priority, or status. Use the returned matches to identify an exact task before changing its status or priority.",
     "inputExample": {
       "query": "high priority"
     },
