@@ -5,7 +5,7 @@ import { mergeDownloadProgress } from './prompt-download'
 import { isUnknownPromptApiError, PROMPT_API_RETRY_LIMIT } from './prompt-retry'
 import { getAppData, getCurrentUser, getProject, searchProjectTasks, setProjectTaskPriority, setProjectTaskStatus } from './mock-api'
 import { normalizeTaskPriority, normalizeTaskStatus, TASK_PRIORITIES, TASK_STATUSES, type Task } from './task-data'
-import { applyBulkTaskStatus, getBulkTaskStatus, parseSearchMatches } from './bulk-task-actions'
+import { applyBulkTaskStatus, getBulkTaskStatus, getRequestedTaskMutationFields, parseSearchMatches } from './bulk-task-actions'
 import { assistantResponseConstraint, normalizeToolInput, parseAssistantResponse, validateToolInput } from './tool-protocol'
 import { createAppState, type AppState, type ChatMessage, type DebugLevel, type LocalTool, type PromptApiRequest, type PromptLanguageModel, type PromptSession, type Scene, type ToolCall, type ToolDetails, type WebMcpContext } from './app-types'
 import { render as renderView } from './render'
@@ -300,9 +300,19 @@ async function runAgenticLoop(session: PromptSession, message: string) {
     }
 
     debugLog('info', `Parsed constrained tool call ${toolCall.name}`, JSON.stringify(toolCall.input))
-    const bulkStatus = getBulkTaskStatus(message, recentSearchMatches.length > 0)
+    const requestedFields = getRequestedTaskMutationFields(message)
+    const requestedMutationField = requestedFields.size === 1 ? [...requestedFields][0] : undefined
+    const calledMutationField = toolCall.name === 'set_task_status' ? 'status' : toolCall.name === 'set_task_priority' ? 'priority' : undefined
     let result: string
-    if (toolCall.name === 'set_task_status' && bulkStatus && recentSearchMatches.length > 0 && bulkUpdates.size === 0) {
+    if (requestedMutationField && calledMutationField && requestedMutationField !== calledMutationField) {
+      result = JSON.stringify({
+        error: `This request changes only ${requestedMutationField}. Do not call set_task_${calledMutationField}; call set_task_${requestedMutationField} instead.`,
+        retry: `Use set_task_${requestedMutationField} with the exact taskId and requested ${requestedMutationField}.`,
+      })
+      debugLog('error', 'Blocked mutation for the wrong task field', `Requested ${requestedMutationField}, received ${calledMutationField}.`)
+    } else {
+      const bulkStatus = getBulkTaskStatus(message, recentSearchMatches.length > 0)
+      if (toolCall.name === 'set_task_status' && bulkStatus && recentSearchMatches.length > 0 && bulkUpdates.size === 0) {
       const updates = applyBulkTaskStatus(recentSearchMatches, bulkStatus, (taskId, status) => JSON.parse(invokeTool(
         'set_task_status',
         { taskId, status },
@@ -316,32 +326,33 @@ async function runAgenticLoop(session: PromptSession, message: string) {
       recentSearchMatches = []
       result = JSON.stringify({ updates })
       debugLog('success', 'Completed bulk task status update', `${updates.length} matching task(s) updated to ${bulkStatus}.`)
-    } else if (toolCall.name === 'set_task_status' && bulkStatus && bulkUpdates.has(toolCall.input.taskId)) {
-      result = JSON.stringify({
-        alreadyUpdated: true,
-        update: bulkUpdates.get(toolCall.input.taskId),
-      })
-      debugLog('info', 'Skipped duplicate bulk task status update', toolCall.input.taskId)
-    } else {
-      result = invokeTool(toolCall.name, toolCall.input, 'Prompt API agentic loop')
-    }
-    if (toolCall.name === 'search_tasks' && bulkStatus) {
-      const matches = parseSearchMatches(result)
-      recentSearchMatches = []
-      const updates = applyBulkTaskStatus(matches, bulkStatus, (taskId, status) => JSON.parse(invokeTool(
-        'set_task_status',
-        { taskId, status },
-        'Prompt API bulk task update',
-      )))
-      updates.forEach((update) => {
-        if (update && typeof update === 'object' && 'id' in update && typeof update.id === 'string') {
-          bulkUpdates.set(update.id, update)
-        }
-      })
-      result = JSON.stringify({ matches, updates })
-      debugLog('success', 'Completed bulk task status update', `${updates.length} matching task(s) updated to ${bulkStatus}.`)
-    } else if (toolCall.name === 'search_tasks') {
-      recentSearchMatches = parseSearchMatches(result)
+      } else if (toolCall.name === 'set_task_status' && bulkStatus && bulkUpdates.has(toolCall.input.taskId)) {
+        result = JSON.stringify({
+          alreadyUpdated: true,
+          update: bulkUpdates.get(toolCall.input.taskId),
+        })
+        debugLog('info', 'Skipped duplicate bulk task status update', toolCall.input.taskId)
+      } else {
+        result = invokeTool(toolCall.name, toolCall.input, 'Prompt API agentic loop')
+      }
+      if (toolCall.name === 'search_tasks' && bulkStatus) {
+        const matches = parseSearchMatches(result)
+        recentSearchMatches = []
+        const updates = applyBulkTaskStatus(matches, bulkStatus, (taskId, status) => JSON.parse(invokeTool(
+          'set_task_status',
+          { taskId, status },
+          'Prompt API bulk task update',
+        )))
+        updates.forEach((update) => {
+          if (update && typeof update === 'object' && 'id' in update && typeof update.id === 'string') {
+            bulkUpdates.set(update.id, update)
+          }
+        })
+        result = JSON.stringify({ matches, updates })
+        debugLog('success', 'Completed bulk task status update', `${updates.length} matching task(s) updated to ${bulkStatus}.`)
+      } else if (toolCall.name === 'search_tasks') {
+        recentSearchMatches = parseSearchMatches(result)
+      }
     }
     debugLog('success', `Tool result returned to model`, `${toolCall.name}: ${result}`)
     const followUp = `The page tool "${toolCall.name}" returned this result:

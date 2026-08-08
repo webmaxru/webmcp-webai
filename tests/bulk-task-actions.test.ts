@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { applyBulkTaskStatus, getBulkTaskStatus, parseSearchMatches } from '../src/bulk-task-actions'
+import { applyBulkTaskStatus, getBulkTaskStatus, getRequestedTaskMutationFields, parseSearchMatches } from '../src/bulk-task-actions'
 
 describe('bulk task actions', () => {
+  it('distinguishes priority and status mutation requests', () => {
+    expect([...getRequestedTaskMutationFields('Set customer demo priority to low')]).toEqual(['priority'])
+    expect([...getRequestedTaskMutationFields('Set customer demo status to done')]).toEqual(['status'])
+    expect([...getRequestedTaskMutationFields('Set customer demo status to done and priority to low')]).toEqual(['status', 'priority'])
+  })
+
   it('extracts the requested status from an all-tasks command', () => {
     expect(getBulkTaskStatus('Set all high priority tasks status to done')).toBe('Done')
     expect(getBulkTaskStatus('Mark all tasks as in_progress')).toBe('In progress')

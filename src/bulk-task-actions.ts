@@ -1,5 +1,14 @@
 import { normalizeTaskStatus, type Task, type TaskStatus } from './task-data'
 
+export type TaskMutationField = 'status' | 'priority'
+
+export function getRequestedTaskMutationFields(message: string): Set<TaskMutationField> {
+  const fields = new Set<TaskMutationField>()
+  if (/\bstatus(?:es)?\b/i.test(message)) fields.add('status')
+  if (/\bpriorit(?:y|ies)\b/i.test(message)) fields.add('priority')
+  return fields
+}
+
 export function getBulkTaskStatus(message: string, hasPriorSearchMatches = false): TaskStatus | undefined {
   const refersToPriorMatches = hasPriorSearchMatches && /\b(their|those|these|matching|found)\b/i.test(message)
   if (!/\ball\b/i.test(message) && !refersToPriorMatches) return undefined
