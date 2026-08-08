@@ -180,21 +180,13 @@ const promptTools = tools.map((tool) => ({
   },
 }))
 
-function buildAssistantSystemPrompt(toolCatalog: WebMcpTool[]) {
-  const catalog = toolCatalog.length
-    ? toolCatalog.map((tool) => `- ${tool.name}: ${tool.description} Input schema: ${JSON.stringify(tool.inputSchema ?? {})}`).join('\n')
-    : '- No WebMCP tools are currently registered. Do not answer workspace-state questions from memory.'
-
+function buildAssistantSystemPrompt() {
   return `You are the ${project.name} Workspace Assistant, an on-device assistant for the project workspace shown in this browser tab.
 
 MISSION
 - Answer questions about the currently loaded Atlas launch project, its tasks, and the signed-in user.
-- The page is the source of truth. You can only know workspace facts by using the page tools below.
+- The page is the source of truth. You can only know workspace facts by using the registered Prompt API tools.
 - Never guess, infer, or fabricate project data, task data, user data, permissions, status, priority, ownership, or dates.
-
-LIVE WEBMCP TOOLS
-The following catalog was read from the page's WebMCP model context after registration. Use these exact names and schemas:
-${catalog}
 
 TOOL USE IS REQUIRED
 - Before answering any question about project health, task counts, task details, task search results, the signed-in user, or permissions, call the relevant page tool.
@@ -209,7 +201,7 @@ TOOL CHAINING
 - Continue chaining registered tools until the user's request is fully resolved. Do not answer early when another tool call is required.
 - Never invent identifiers, arguments, or results. If a prerequisite returns no match, conflicting matches, or insufficient information, stop and ask for clarification or report the failure.
 - MANDATORY RECOVERY: If any tool returns an error saying an identifier, task, resource, or named item was not found, unknown, invalid, or could not be resolved, you MUST NOT answer the user yet.
-- First inspect the LIVE WEBMCP TOOLS catalog for a registered lookup or search tool that can resolve the original description. If one exists, call it immediately using the user's original words.
+- First inspect the registered Prompt API tools for a lookup or search tool that can resolve the original description. If one exists, call it immediately using the user's original words.
 - When the lookup returns exactly one matching item, extract its exact identifier and retry the failed operation with that identifier. Do not ask the user for an ID when the lookup resolved one.
 - If the lookup returns no matches or more than one plausible match, do not retry the operation; explain the result and ask the user to clarify.
 - After a mutating tool call, use its returned data as the authoritative result and clearly state whether the operation succeeded.
@@ -271,7 +263,7 @@ function registerWebMcpTools() {
       state.webMcpToolCatalog = modelContext.getTools
         ? (await modelContext.getTools()).filter((tool) => state.webMcpRegisteredTools.includes(tool.name))
         : tools.filter((tool) => state.webMcpRegisteredTools.includes(tool.name)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: toolSchemas[tool.name] }))
-      debugLog('success', 'WebMCP tool catalog loaded', `${state.webMcpToolCatalog.length} tools added to the Prompt API system prompt.`)
+      debugLog('success', 'WebMCP tool catalog loaded', `${state.webMcpToolCatalog.length} tools available to the Prompt API session.`)
       debugLog(state.webMcpErrors.length ? 'error' : 'success', 'WebMCP registration finished', `${state.webMcpRegisteredTools.length}/${tools.length} tools registered.`)
       void detectPromptApi()
       render()
@@ -325,7 +317,7 @@ function promptApiSettings() {
     create: {
       ...promptSessionOptions(),
       tools: promptToolRequestDefinitions(),
-      initialPrompts: [{ role: 'system', content: buildAssistantSystemPrompt(state.webMcpToolCatalog) }],
+      initialPrompts: [{ role: 'system', content: buildAssistantSystemPrompt() }],
       monitor: '[function]',
     },
     prompt: {
@@ -358,7 +350,7 @@ async function ensurePromptSession() {
 
   const createOptions = {
     ...options,
-    initialPrompts: [{ role: 'system', content: buildAssistantSystemPrompt(state.webMcpToolCatalog) }],
+    initialPrompts: [{ role: 'system', content: buildAssistantSystemPrompt() }],
     monitor: (monitor: EventTarget) => {
       debugLog('pending', 'Local model download started or is continuing')
       monitor.addEventListener('downloadprogress', (event) => {
