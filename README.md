@@ -9,17 +9,17 @@ npm install
 npm run dev
 ```
 
-Open the local Vite URL. The chat uses the native `LanguageModel` Prompt API only; it does not synthesize answers when the API is unavailable. On the first prompt, or via **Debug → Prepare local model**, the app calls `LanguageModel.create()` with the page tools and a download monitor. In a browser that exposes `document.modelContext.registerTool`, the page registers all four tools at startup.
+Open the local Vite URL. The chat uses the native `LanguageModel` Prompt API only; it does not synthesize answers when the API is unavailable. On the first prompt, or via **Settings → Prepare local model**, the app calls `LanguageModel.create()` with the page tools and a download monitor. In a browser that exposes `document.modelContext.registerTool`, the page registers all four tools at startup.
 
-For Chrome preview testing, use a supported Chrome build, enable the Prompt API/on-device model flags and `chrome://flags/#enable-webmcp-testing`, then reload the HTTPS site. The **Debug** panel shows the exact availability, download, session, and registration states. See `chrome://on-device-internals` for browser-level model download diagnostics.
+For Chrome preview testing, use a supported Chrome build, enable the Prompt API/on-device model flags and `chrome://flags/#enable-webmcp-testing`, then reload the HTTPS site. The **Settings** page shows the exact availability, download, session, and registration states; **Trace** contains the runtime event log. See `chrome://on-device-internals` for browser-level model download diagnostics.
 
 ## Suggested talk flow
 
 1. Start on **Overview** and point out that tasks, permissions, and health are already in page memory.
-2. Ask “What is the project health?” and expand **Tool invocations**: the model chooses `get_project_summary`.
+2. Ask “What is the project health?” and expand the tool call in **Audit log**: the model chooses `get_project_summary`.
 3. Ask “Find high priority tasks”: the page runs the unified `search_tasks` tool against local state and returns the result. The same tool resolves a natural-language task description before a status update.
-4. Open **Activity** to show the calls are inspectable, then **Settings** to show the local auth boundary and browser capability status.
-5. Open **Debug** to show secure-context checks, the active `document.modelContext`/legacy fallback surface, per-tool registration results, Prompt API availability, local model download status, and the full runtime log.
+4. Open **Audit log** to show detailed call metadata, inputs, outputs, timing, and sources, then **Settings** to show the local auth boundary and browser capability status.
+5. Open **Trace** to show the runtime event log. The system prompt, WebMCP status, and Prompt API status are available in **Settings**.
 6. Explain that unsupported browsers report an explicit capability error; there is no fake assistant response, server-side model, secret, or data replication requirement.
 
 ## Architecture
