@@ -2,7 +2,7 @@
   {
     "name": "get_project_summary",
     "title": "Get project summary",
-    "description": "Read aggregate project health and task counts from page-local state. Use only for project-level summaries; never use this tool to find, filter, resolve, or select task records. Use search_tasks for any task lookup or task-based mutation.",
+    "description": "Read the current project name, aggregate health, total task count, and in-progress count from page-local state. Use this read-only capability only for project-level summaries. It does not return task records and must never be used to find, filter, resolve, or select tasks; use the advertised task lookup capability for every task question or task-based mutation.",
     "inputExample": {},
     "inputSchema": {
       "type": "object",
@@ -29,7 +29,7 @@
   {
     "name": "search_tasks",
     "title": "Search tasks",
-    "description": "Find and resolve task records already loaded in this page by title, owner, priority, or status. This is the required tool for every task lookup, including selecting tasks for an 'all' request. Use the returned exact task IDs before changing status or priority; do not use get_project_summary for task discovery.",
+    "description": "Read and resolve task records already loaded in this page by the user's original title, owner, priority, status, or other task-description words. This is the required read-only capability for every task lookup, including task details, filters, and selecting tasks for an 'all' request. Return matching records with exact IDs; callers must complete this lookup before any mutation, use only exact returned IDs, and treat zero matches or multiple matches as a reason to clarify rather than guess. Do not use the project-summary capability for task discovery.",
     "inputExample": {
       "query": "high priority"
     },
@@ -102,7 +102,7 @@
   {
     "name": "set_task_status",
     "title": "Set task status",
-    "description": "Update the status of one task identified by an exact task ID returned by search_tasks, then return the updated task. This tool does not find tasks.",
+    "description": "Mutate only the status field of one task, identified by an exact task ID returned by the advertised task lookup capability, then return the updated task record. Use only after the user explicitly authorizes a status change and lookup has resolved exactly one task, except an explicit 'all' request may apply the requested status to every returned match. Accept only the advertised status values; this capability does not find tasks and never changes priority.",
     "inputExample": {
       "taskId": "t-1",
       "status": "Done"
@@ -159,7 +159,7 @@
   {
     "name": "set_task_priority",
     "title": "Set task priority",
-    "description": "Update the priority of one task identified by an exact task ID returned by search_tasks, then return the updated task. This tool does not find tasks.",
+    "description": "Mutate only the priority field of one task, identified by an exact task ID returned by the advertised task lookup capability, then return the updated task record. Use only after the user explicitly authorizes a priority change and lookup has resolved exactly one task. Accept only the advertised priority values; this capability does not find tasks and never changes status.",
     "inputExample": {
       "taskId": "t-1",
       "priority": "Low"
