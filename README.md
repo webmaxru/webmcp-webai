@@ -13,6 +13,10 @@ Open the local Vite URL. The chat uses the native `LanguageModel` Prompt API onl
 
 For Chrome preview testing, use a supported Chrome build, enable the Prompt API/on-device model flags and `chrome://flags/#enable-webmcp-testing`, then reload the HTTPS site. The **Settings** page shows the exact availability, download, session, and registration states; **Trace** contains the runtime event log. See `chrome://on-device-internals` for browser-level model download diagnostics.
 
+### Prompt API temperature and deterministic behavior
+
+The portable web-page Prompt API does not provide a supported `temperature` control. `temperature`, `topK`, and `LanguageModel.params()` are experimental and extension-only, so this demo does not depend on them. Instead, it makes responses more predictable by using fixed system instructions, explicit response-format requirements, stable tool definitions and context, and `responseConstraint` JSON Schema where structured output is required. These techniques reduce variation but do not guarantee identical output across browsers, model versions, or runs.
+
 ## Suggested talk flow
 
 1. Start on **Overview** and point out that tasks, permissions, and health are already in page memory.
