@@ -68,6 +68,7 @@ interface PromptApiRequest {
   operation: 'create' | 'prompt'
   startedAt: number
   request: Record<string, unknown>
+  response: string | null
 }
 
 type ChatMessage = { role: 'user' | 'assistant' | 'status'; text: string }
@@ -281,7 +282,14 @@ function promptApiSettings() {
 }
 
 function recordPromptRequest(operation: PromptApiRequest['operation'], request: Record<string, unknown>) {
-  state.promptRequests.unshift({ operation, startedAt: Date.now(), request })
+  const entry: PromptApiRequest = { operation, startedAt: Date.now(), request, response: null }
+  state.promptRequests.unshift(entry)
+  render()
+  return entry
+}
+
+function recordPromptResponse(entry: PromptApiRequest, response: string) {
+  entry.response = response
   render()
 }
 
@@ -365,8 +373,9 @@ function invokeTool(name: string, input: Record<string, string> = {}, source = '
 
 async function runAgenticLoop(session: PromptSession, message: string) {
   const promptOptions = { responseConstraint: assistantResponseConstraint }
-  recordPromptRequest('prompt', { input: message, options: promptOptions })
+  const initialRequest = recordPromptRequest('prompt', { input: message, options: promptOptions })
   let response = await session.prompt(message, promptOptions)
+  recordPromptResponse(initialRequest, response)
   const registeredNames = new Set(state.webMcpToolCatalog.map((tool) => tool.name))
 
   for (let step = 0; step < 8; step += 1) {
@@ -396,8 +405,9 @@ async function runAgenticLoop(session: PromptSession, message: string) {
 ${result}
 
 Use this result to answer the user's original request. For an "all" status request, the result includes an update for every matched task; do not repeat those updates. Otherwise, if another registered tool is required, return a tool_call JSON object; if the request is fully resolved, return a final JSON object.`
-    recordPromptRequest('prompt', { input: followUp, options: promptOptions })
+    const followUpRequest = recordPromptRequest('prompt', { input: followUp, options: promptOptions })
     response = await session.prompt(followUp, promptOptions)
+    recordPromptResponse(followUpRequest, response)
   }
 
   throw new Error('The agentic tool loop exceeded its eight-step limit.')
@@ -469,7 +479,7 @@ function renderActivity() {
 
 function renderDebug() {
   const logs = state.debugLogs.map((entry) => `<div class="debug-log ${entry.level}"><time>${entry.time}</time><span class="log-symbol">${entry.level === 'success' ? '✓' : entry.level === 'error' ? '!' : entry.level === 'pending' ? '…' : '·'}</span><div><strong>${escapeHtml(entry.message)}</strong>${entry.detail ? `<small>${escapeHtml(entry.detail)}</small>` : ''}</div></div>`).join('')
-  const requests = state.promptRequests.map((entry) => `<details class="debug-section prompt-request"><summary><span><span class="eyebrow">PROMPT API / ${entry.operation.toUpperCase()}</span><strong>${new Date(entry.startedAt).toLocaleTimeString()} · full request</strong></span><span class="tool-count">${entry.operation}</span></summary><pre>${escapeHtml(JSON.stringify(entry.request, null, 2))}</pre></details>`).join('')
+  const requests = state.promptRequests.map((entry) => `<details class="debug-section prompt-request"><summary><span><span class="eyebrow">PROMPT API / ${entry.operation.toUpperCase()}</span><strong>${new Date(entry.startedAt).toLocaleTimeString()} · full request and response</strong></span><span class="tool-count">${entry.operation}</span></summary><div class="prompt-request-payload"><div><span class="eyebrow">REQUEST</span><pre>${escapeHtml(JSON.stringify(entry.request, null, 2))}</pre></div><div><span class="eyebrow">RESPONSE</span><pre>${entry.response === null ? 'Awaiting response…' : escapeHtml(entry.response)}</pre></div></div></details>`).join('')
   return `<section class="content-inner debug-page"><div class="page-header"><div><span class="eyebrow">SYSTEM / TRACE</span><h1>Runtime trace</h1><p>Prompt API and WebMCP lifecycle events are recorded here. Tool call details live in the Audit log.</p></div></div><div class="debug-section"><div class="section-header"><div><span class="eyebrow">RUNTIME LOG</span><h2>Prompt API + WebMCP events</h2></div><span class="tool-count">${state.debugLogs.length}</span></div><div class="debug-log-list">${logs || '<div class="trace-empty">Waiting for page diagnostics…</div>'}</div></div><div class="section-header trace-request-heading"><div><span class="eyebrow">PROMPT API REQUESTS</span><h2>Full request payloads</h2></div><span class="tool-count">${state.promptRequests.length}</span></div>${requests || '<div class="debug-section"><div class="trace-empty">No Prompt API requests yet.</div></div>'}</section>`
 }
 
