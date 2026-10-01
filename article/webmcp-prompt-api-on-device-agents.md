@@ -4,9 +4,9 @@
 
 The most interesting browser agent may not be the one that can operate every website from the outside. It may be the one that operates a single application from the inside, using the same state, session, and business rules that the application already trusts.
 
-That is the experiment in this repository.
+A small browser workspace makes that architecture concrete.
 
-The project combines two emerging browser capabilities:
+The implementation combines two emerging browser capabilities:
 
 - **WebMCP**, which lets a page expose structured tools to an agent instead of making the agent infer intent from pixels and DOM controls.
 - **The Prompt API**, which gives the page access to a browser-provided language model, currently backed by an on-device model in Chrome implementations.
@@ -44,7 +44,7 @@ The problem is not that a remote model is always wrong. Larger models and server
 
 ## A different arrangement: bring the model to the page
 
-This project keeps the application boundary intact:
+The resulting design keeps the application boundary intact:
 
 ```mermaid
 flowchart LR
@@ -68,7 +68,7 @@ flowchart LR
     API -. authorized session .-> Backend[Application backend]
 ```
 
-In the demo, the tool registry exposes five narrow capabilities:
+The sample tool registry exposes five narrow capabilities:
 
 ```text
 get_project_summary
@@ -161,9 +161,9 @@ The production rule should be simple:
 
 > Never let the model's belief about permission authorize an operation. Authorize the operation when the tool executes.
 
-This repository makes the signed-in user and permissions visible through `get_current_user`, which is useful for demonstrating the boundary. The mock data layer is intentionally small, though, and its mutation functions are not a complete production authorization system. A real implementation would still validate the server-side session, tenant, object-level permission, mutation scope, anti-forgery requirements, replay behavior, and confirmation policy at execution time.
+The sample implementation makes the signed-in user and permissions visible through `get_current_user`, which helps demonstrate the boundary. Its mock data layer is intentionally small, though, and its mutation functions are not a complete production authorization system. A real implementation would still validate the server-side session, tenant, object-level permission, mutation scope, anti-forgery requirements, replay behavior, and confirmation policy at execution time.
 
-That limitation strengthens the experiment. It shows exactly where the browser-local model ends and application security must begin.
+That limitation marks the point where browser-local reasoning ends and application security must begin.
 
 ## Structured tools beat DOM interpretation
 
@@ -226,7 +226,7 @@ This is an important design choice: safety does not live only in the system prom
 
 ## The lookup-before-mutation rule
 
-The most instructive workflow in the demo is a task update.
+A task update shows how these constraints work together.
 
 A user can say:
 
@@ -282,11 +282,11 @@ if (!requestedMutationField && calledMutationField) {
 }
 ```
 
-This is the difference between a demo that merely makes a model call functions and a demo that explores agent safety as an application design problem.
+This is the difference between merely letting a model call functions and treating agent safety as an application design problem.
 
 ## The page becomes inspectable
 
-The project deliberately exposes its own trace:
+The application deliberately exposes its own trace:
 
 - WebMCP capability detection and registration;
 - Prompt API availability and model download progress;
@@ -308,7 +308,7 @@ The trace also answers questions that are easy to hide in a polished chat surfac
 
 For enterprise software, those questions are not ancillary. They are part of the evidence needed to trust an agent with real work.
 
-## What this experiment makes possible
+## Where this architecture could matter
 
 The architecture is especially relevant where application context is sensitive, dynamic, or expensive to replicate:
 
@@ -334,9 +334,9 @@ WebMCP's structured inputs can help an agent fill or navigate complex flows with
 
 These are hypotheses to validate, not promises. The useful question is not whether every website should expose every action to an agent. It is whether selected applications can publish carefully scoped capabilities that make assistance safer and more reliable.
 
-## What the experiment does not prove
+## What this architecture does not prove
 
-The repository is a focused browser demonstration, not a complete production security architecture.
+This is a focused browser implementation, not a complete production security architecture.
 
 It does not prove:
 
@@ -355,7 +355,7 @@ The honest conclusion is narrower and more useful: **structured, page-native too
 
 ## A practical implementation pattern
 
-For an application team evaluating this direction, the repository suggests a sequence:
+For an application team evaluating this direction, the implementation suggests a sequence:
 
 1. Identify a small set of read-only capabilities whose results are already visible in the page.
 2. Give each capability a precise name, description, JSON Schema, and output shape.
@@ -394,4 +394,4 @@ The important shift is not that the model moved into the browser. It is that the
 - [WebMCP tool security | Chrome for Developers](https://developer.chrome.com/docs/ai/webmcp/secure-tools)
 - [Prompt API | Chrome for Developers](https://developer.chrome.com/docs/ai/prompt-api)
 - [Prompt API explainer | Web Machine Learning Community Group](https://github.com/webmachinelearning/prompt-api)
-- Repository implementation: [`src/webmcp-service.ts`](../src/webmcp-service.ts), [`src/prompt-api-service.ts`](../src/prompt-api-service.ts), [`src/tool-registry.ts`](../src/tool-registry.ts), [`src/tool-protocol.ts`](../src/tool-protocol.ts), [`src/data/tools.json`](../src/data/tools.json)
+- Sample implementation: [`src/webmcp-service.ts`](../src/webmcp-service.ts), [`src/prompt-api-service.ts`](../src/prompt-api-service.ts), [`src/tool-registry.ts`](../src/tool-registry.ts), [`src/tool-protocol.ts`](../src/tool-protocol.ts), [`src/data/tools.json`](../src/data/tools.json)
